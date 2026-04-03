@@ -1,0 +1,34 @@
+# Zkompilované Java soubory
+*.class
+
+# Složky z IDE (IntelliJ IDEA, Eclipse, NetBeans)
+.idea/
+*.iml
+*.iws
+.metadata/
+bin/
+out/
+src/main/resources/*.mp3
+
+# Maven (Složka, kam se generují buildy)
+target/
+
+# Spustitelné a nativní soubory (Windows, Mac, Linux)
+*.exe
+*.msi
+*.app
+*.dmg
+*.so
+*.dylib
+*.dll
+
+# Zkompilované Java archivy (Odkomentuj, pokud nechceš nahrávat ani .jar)
+# *.jar
+# *.war
+
+# Systémové soubory
+.DS_Store
+Thumbs.db
+
+# Dočasné soubory z logiky hry
+level.txt
