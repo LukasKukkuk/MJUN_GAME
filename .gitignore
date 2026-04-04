@@ -21,6 +21,9 @@ target/
 *.so
 *.dylib
 *.dll
+.env
+.env.*
+*.env
 
 # Zkompilované Java archivy (Odkomentuj, pokud nechceš nahrávat ani .jar)
 # *.jar

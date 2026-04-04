@@ -16,6 +16,8 @@ public class Enemy {
     private long freezeEndTime = 0;
     private long dotEndTime = 0;
     private long lastDotTickTime = 0;
+    private double flankAngle = Math.random() * 2 * Math.PI; // Náhodný úhel pro obkličování
+    private double angleSpeed = (Math.random() * 0.02) - 0.01; // Rychlost kroužení
 
     // Proměnné pro střely nepřátel
     private long lastShootTime = 0;
@@ -76,32 +78,47 @@ public class Enemy {
         double moveX = 0;
         double moveY = 0;
 
-        // POHYB PODLE TYPU
+        // --- ELITE AI LOGIKA ---
         if (type == Type.THIEVES || type == Type.BANDITS) {
-            if (distance > 0) {
-                moveX = (dx / distance);
-                moveY = (dy / distance);
+            // FLANKOVÁNÍ: Nepřátelé nejdou přímo, ale snaží se hráče "obtékat"
+            flankAngle += angleSpeed; // Mírně měníme úhel útoku
+
+            // Cílová pozice není hráč, ale bod kousek vedle něj (podle flankAngle)
+            double offsetDist = (type == Type.THIEVES) ? 20 : 60;
+            double tightTargetX = targetX + Math.cos(flankAngle) * offsetDist;
+            double tightTargetY = targetY + Math.sin(flankAngle) * offsetDist;
+
+            double fdx = tightTargetX - x;
+            double fdy = tightTargetY - y;
+            double fDist = Math.sqrt(fdx * fdx + fdy * fdy);
+
+            if (fDist > 0) {
+                moveX = fdx / fDist;
+                moveY = fdy / fDist;
             }
         } else if (type == Type.ARCHERS) {
-            if (distance < 200) {
-                // Uteč od hráče, pokud je moc blízko
+            // VYLEPŠENÝ KITING: Lučištník si drží ideální sféru (250-350 px)
+            if (distance < 250) {
+                // Ústup (Kiting)
                 moveX = -(dx / distance);
                 moveY = -(dy / distance);
-            } else if (distance > 300) {
-                // Přibliž se, pokud je moc daleko
+            } else if (distance > 400) {
+                // Přiblížení
                 moveX = (dx / distance);
                 moveY = (dy / distance);
             } else {
-                // Kroužení kolem hráče, pokud je ve správné vzdálenosti
-                moveX = -(dy / distance);
-                moveY = (dx / distance);
+                // Taktické kroužení (udržování pozice a palba)
+                flankAngle += 0.01; // Lučištníci rotují kolem hráče
+                moveX = -dy / distance + (Math.cos(flankAngle) * 0.2);
+                moveY = dx / distance + (Math.sin(flankAngle) * 0.2);
             }
         }
 
+        // Aplikace pohybu
         x += moveX * speed;
         y += moveY * speed;
 
-        // STŘELBA BANDITŮ A ARCHERŮ
+        // --- STŘELBA A SEPARACE (Zůstává stejné jako ve vašem kódu) ---
         long time = System.currentTimeMillis();
         if (type == Type.BANDITS && distance < 300 && time - lastShootTime > shootCooldown) {
             enemyProjectiles.add(new Projectile(x + size/2, y + size/2, targetX, targetY, 1, true));
