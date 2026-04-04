@@ -4,7 +4,7 @@ import com.jagrosh.discordipc.IPCClient;
 import com.jagrosh.discordipc.IPCListener;
 import com.jagrosh.discordipc.entities.RichPresence;
 import com.jagrosh.discordipc.entities.Packet;
-import com.jagrosh.discordipc.entities.ActivityType; // Přidáno pro typ aktivity
+import com.jagrosh.discordipc.entities.ActivityType;
 import com.google.gson.JsonObject;
 import com.jagrosh.discordipc.entities.User;
 import io.github.cdimascio.dotenv.Dotenv;
@@ -15,13 +15,35 @@ public class DiscordRPCManager {
     private static IPCClient client;
     private static boolean initialized = false;
 
-    private static final Dotenv dotenv = Dotenv.load();
-    private static final String appToken = dotenv.get("APPLICATION_TOKEN");
-    private static final long APPLICATION_ID = Long.parseLong(appToken.replace("L", "").replace("l", ""));
-
+    // Odstraněno 'final', aby to šlo bezpečně načíst
+    private static long APPLICATION_ID = 0;
     private static long startTimestamp = 0;
 
+    // Statický blok pro bezpečné načtení z resources (classpath)
+    static {
+        try {
+            // ignoreIfMissing() zajistí, že to nespadne, když se .env nenajde
+            Dotenv dotenv = Dotenv.configure().ignoreIfMissing().load();
+            String appToken = dotenv.get("APPLICATION_TOKEN");
+
+            // Ochrana proti NullPointerException
+            if (appToken != null && !appToken.isEmpty()) {
+                APPLICATION_ID = Long.parseLong(appToken.replace("L", "").replace("l", ""));
+            } else {
+                System.out.println("⚠️ APPLICATION_TOKEN nenalezen v .env souboru.");
+            }
+        } catch (Exception e) {
+            System.out.println("⚠️ Chyba při načítání .env pro Discord RPC: " + e.getMessage());
+        }
+    }
+
     public static void start() {
+        // Pokud se ID nenačetlo, nepokoušíme se připojit (zabraní to pádu)
+        if (APPLICATION_ID == 0) {
+            System.out.println("⚠️ Discord RPC zrušeno: Chybí platné APPLICATION_ID.");
+            return;
+        }
+
         try {
             client = new IPCClient(APPLICATION_ID);
 
@@ -42,9 +64,7 @@ public class DiscordRPCManager {
                 @Override public void onActivitySpectate(IPCClient client, String secret) {}
 
                 @Override
-                public void onActivityJoinRequest(IPCClient ipcClient, String s, User user) {
-
-                }
+                public void onActivityJoinRequest(IPCClient ipcClient, String s, User user) {}
 
                 public void onActivityJoinRequest(IPCClient client, JsonObject request) {}
             });
@@ -60,8 +80,6 @@ public class DiscordRPCManager {
 
         try {
             RichPresence.Builder builder = new RichPresence.Builder();
-
-            // PŘIDÁNO: Specifikujeme, že se jedná o hraní hry
             builder.setActivityType(ActivityType.Playing);
 
             if (hp > 0) {

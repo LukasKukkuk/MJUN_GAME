@@ -61,14 +61,20 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
         new Thread(() -> {
             try {
-                Dotenv dotenv = Dotenv.load();
+                // Přidáno ignoreIfMissing() pro načítání z resources/classpath
+                Dotenv dotenv = Dotenv.configure().ignoreIfMissing().load();
                 String token = dotenv.get("DISCORD_TOKEN");
+
                 if (token != null && !token.isEmpty()) {
                     discordManager = new DiscordManager(this, token);
+                } else {
+                    System.out.println("⚠️ DISCORD_TOKEN v .env nenalezen, chat akce nebudou fungovat.");
                 }
-            } catch (Exception e) {
-                System.out.println("⚠️ Nepodařilo se připojit k Discordu (chybí .env?): " + e.getMessage());
-            }
+                } catch (Exception e) {
+                    System.out.println("⚠️ Nepodařilo se načíst .env konfiguraci pro Discord bota: " + e.getMessage());
+                }
+
+                // Spustí se vždy, ale uvnitř je teď ochrana, takže hru neshodí
             DiscordRPCManager.start();
         }).start();
     }
