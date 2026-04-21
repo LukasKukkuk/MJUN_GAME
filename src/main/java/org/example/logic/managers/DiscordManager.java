@@ -12,7 +12,6 @@ import java.net.URISyntaxException;
 public class DiscordManager extends WebSocketClient {
     private GamePanel game;
 
-    // Konstruktor nyní nepotřebuje botToken, ale IP adresu Python serveru
     public DiscordManager(GamePanel game, String serverUri) throws URISyntaxException {
         super(new URI(serverUri));
         this.game = game;
@@ -20,33 +19,51 @@ public class DiscordManager extends WebSocketClient {
 
     @Override
     public void onOpen(ServerHandshake handshakeData) {
-        System.out.println("🌐 ✅ Úspěšně připojeno k Python centrálnímu botovi!");
+        System.out.println("🌐 ✅ Úspěšně připojeno k Python botovi! Čekám na Discord ID...");
 
-        // 📦 Java Vytváří a odesílá svůj první JSON!
-        JsonObject welcomeMsg = new JsonObject();
-        welcomeMsg.addProperty("type", "hello");
-        welcomeMsg.addProperty("message", "Hra se úspěšně nastartovala!");
-        // Později sem můžeme přidat i: welcomeMsg.addProperty("discord_id", "12345");
+        new Thread(() -> {
+            try {
+                int attempts = 0;
+                // Čeká až 5 sekund na naběhnutí RPC klienta
+                while (DiscordRPCManager.getUserId() == null && attempts < 10) {
+                    Thread.sleep(500);
+                    attempts++;
+                }
 
-        // Odeslání do Pythonu
-        send(welcomeMsg.toString());
+                String finalId = DiscordRPCManager.getUserId();
+                if (finalId == null) {
+                    System.out.println("⚠️ RPC nedodalo ID včas, zkouším zálohu z .env...");
+                    io.github.cdimascio.dotenv.Dotenv dotenv = io.github.cdimascio.dotenv.Dotenv.configure().ignoreIfMissing().load();
+                    finalId = dotenv.get("PLAYER_DISCORD_ID", "0");
+                }
+
+                JsonObject welcomeMsg = new JsonObject();
+                welcomeMsg.addProperty("type", "register");
+                welcomeMsg.addProperty("discord_id", finalId);
+
+                send(welcomeMsg.toString());
+                System.out.println("📤 Registrace odeslána s ID: " + finalId);
+
+            } catch (Exception e) {
+                System.out.println("❌ Chyba při registraci k serveru: " + e.getMessage());
+            }
+        }).start();
     }
 
     @Override
     public void onMessage(String message) {
         try {
-            // Přijmeme zprávu a převedeme ji na JSON
             JsonObject json = JsonParser.parseString(message).getAsJsonObject();
 
             if (json.has("action")) {
                 String action = json.get("action").getAsString();
 
-                // Podle toho, co vyhrálo v Pythonu, zavoláme metodu ve hře
                 switch (action) {
                     case "v_heal" -> game.triggerDiscordAction("❤️ DIVÁCI TĚ VYLÉČILI!", () -> game.spawnSoulFromDiscord());
-                    case "v_gank" -> game.triggerDiscordAction("😈 DIVÁCI POSLALI POSILY!", () -> game.spawnEnemyFromDiscord());
-                    case "v_troll" -> game.triggerDiscordAction("🌀 TROLL: OBRÁCENÉ OVLÁDÁNÍ!", () -> game.activateTrollMode(5000));
                     case "v_freeze" -> game.triggerDiscordAction("❄️ DIVÁCI ZMRAZILI NEPŘÁTELE!", () -> game.freezeEnemiesFromDiscord());
+                    case "v_troll" -> game.triggerDiscordAction("🌀 TROLL: OBRÁCENÉ OVLÁDÁNÍ!", () -> game.activateTrollMode(5000));
+                    case "v_horde" -> game.triggerDiscordAction("💀 HORDA: BLÍŽÍ SE SMRT!", () -> game.spawnHorde());
+                    case "v_rage" -> game.triggerDiscordAction("⚡ RAGE: NEPŘÁTELÉ ZUŘÍ!", () -> game.rageModeFromDiscord());
                     default -> System.out.println("⚠️ Přijata neznámá akce od bota: " + action);
                 }
             }

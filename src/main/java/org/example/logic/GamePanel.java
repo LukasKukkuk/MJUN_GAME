@@ -47,9 +47,11 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     private boolean invertedControls = false;
     private long trollTimer = 0;
 
+    // Časovač poškození pro Ohnivou auru
+    private long lastAuraDamageTime = 0;
+
     private int currentWave = 1;
     private boolean showTutorial = true;
-
     private Image[] playerWalkAnim;
 
     public GamePanel() {
@@ -61,21 +63,15 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
         new Thread(() -> {
             try {
-                // Přidáno ignoreIfMissing() pro načítání z resources/classpath
                 Dotenv dotenv = Dotenv.configure().ignoreIfMissing().load();
                 String token = dotenv.get("DISCORD_TOKEN");
-
                 if (token != null && !token.isEmpty()) {
                     discordManager = new DiscordManager(this, "ws://localhost:8765");
-                    discordManager.connect(); // Zapne naslouchání
-                } else {
-                    System.out.println("⚠️ DISCORD_TOKEN v .env nenalezen, chat akce nebudou fungovat.");
+                    discordManager.connect();
                 }
-                } catch (Exception e) {
-                    System.out.println("⚠️ Nepodařilo se načíst .env konfiguraci pro Discord bota: " + e.getMessage());
-                }
-
-                // Spustí se vždy, ale uvnitř je teď ochrana, takže hru neshodí
+            } catch (Exception e) {
+                System.out.println("⚠️ Nepodařilo se načíst konfiguraci pro Discord bota.");
+            }
             DiscordRPCManager.start();
         }).start();
     }
@@ -88,7 +84,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         this.WIDTH = w;
         this.HEIGHT = h;
         setPreferredSize(new Dimension(w, h));
-        revalidate(); // Zajistí okamžité překreslení po změně rozlišení
+        revalidate();
     }
 
     private Image loadImage(String path) {
@@ -100,7 +96,6 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         currentWave = startWave;
         player = new Player(WIDTH / 2.0, HEIGHT / 2.0);
         player.level = Math.min(currentWave, 3);
-
         player.setAnimations(playerWalkAnim);
 
         enemies.clear();
@@ -126,6 +121,8 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         }
     }
 
+    // ===== AKCE PRO DISCORD BOTA =====
+
     public void spawnSoulFromDiscord() {
         if (gameState != State.PLAYING || isGameOver || player == null) return;
         double rx = player.x + (Math.random() * 200 - 100);
@@ -139,6 +136,45 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         double ry = player.y + (Math.random() * 400 - 200);
         enemies.add(new Enemy(rx, ry, Type.THIEVES, currentWave));
     }
+
+    public void spawnHorde() {
+        new Thread(() -> {
+            try {
+                for (int i = 0; i < 10; i++) {
+                    spawnEnemyFromDiscord();
+                    Thread.sleep(200);
+                }
+            } catch (InterruptedException e) {}
+        }).start();
+    }
+
+    public void rageModeFromDiscord() {
+        if (gameState != State.PLAYING || isGameOver) return;
+        for (Enemy enemy : enemies) {
+            enemy.hp += 50;
+        }
+        for (int i=0; i<3; i++) spawnEnemyFromDiscord();
+    }
+
+    public void freezeEnemiesFromDiscord() {
+        if (gameState != State.PLAYING || isGameOver) return;
+        for (Enemy enemy : enemies) {
+            enemy.freeze(3000);
+        }
+    }
+
+    public void triggerDiscordAction(String text, Runnable action) {
+        this.discordMsg = text;
+        this.msgTimer = System.currentTimeMillis() + 4000;
+        action.run();
+    }
+
+    public void activateTrollMode(int durationMs) {
+        this.invertedControls = true;
+        this.trollTimer = System.currentTimeMillis() + durationMs;
+    }
+
+    // ===== HERNÍ SMYČKA =====
 
     @Override
     public void run() {
@@ -155,26 +191,18 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                 if (gameState == State.LOADING) {
                     if (!loadingStarted) {
                         loadingStarted = true;
-
                         new Thread(() -> {
                             loadingProgress = 10;
                             playerWalkAnim = new Image[]{ loadImage("/player_walk1.png"), loadImage("/player_walk2.png") };
-
                             loadingProgress = 30;
                             Launcher.audioManager = new AudioManager();
                             audioManager = Launcher.audioManager;
-
                             audioManager.preloadAudio();
                             audioManager.setVolume(ConfigManager.volume);
-
                             loadingProgress = 80;
-                            if (window != null) {
-                                settingsScreen = new SettingsScreen(audioManager, window);
-                            }
-
+                            if (window != null) settingsScreen = new SettingsScreen(audioManager, window);
                             loadingProgress = 100;
                             try { Thread.sleep(300); } catch (Exception e) {}
-
                             audioManager.playMenuMusic();
                             gameState = State.MENU;
                         }).start();
@@ -208,15 +236,12 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
         if (waveManager.isWaveFinished(enemies)) {
             currentWave++;
-
             player.level = Math.min(currentWave, 3);
             ConfigManager.save(currentWave);
             audioManager.playMusicForWave(Math.min(currentWave, 3));
-
             if (player.activeWeapon == 2 && currentWave < 2) player.activeWeapon = 1;
             if (player.activeWeapon == 3 && currentWave < 3) player.activeWeapon = 1;
             if (player.activeWeapon == 4 && currentWave < 4) player.activeWeapon = 1;
-
             waveManager.startNextWave(currentWave);
         }
 
@@ -265,7 +290,6 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                         } else {
                             enemy.hp -= (player.level == 2) ? 40 : 25;
                         }
-
                         double dx = enemy.x - player.x, dy = enemy.y - player.y;
                         double dist = Math.hypot(dx, dy);
                         if(dist > 0) {
@@ -282,6 +306,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             }
         }
 
+        // --- AKTUALIZACE NEPŘÁTELSKÝCH STŘEL (Blokace Aurou / Štítem) ---
         for (Projectile p : enemyProjectiles) {
             p.update();
             if (p.x < 0 || p.x > WIDTH || p.y < 0 || p.y > HEIGHT) {
@@ -304,11 +329,32 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                 player.takeDamage(10);
                 enemyProjectiles.remove(p);
             }
-            else if (player.isShieldActive) {
+            // ZDE JE KOUZLO: Štít i Aura blokují střely!
+            else if (player.isShieldActive || player.isFireAuraActive) {
                 double distToPlayer = Math.hypot(p.x - player.x, p.y - player.y);
-                if (distToPlayer < player.size + 40) {
+                if (distToPlayer < player.AURA_RADIUS + 20) {
                     enemyProjectiles.remove(p);
                 }
+            }
+        }
+
+        // --- TICK OHNIVÉ AURY (Udělování damage) ---
+        if (player.isFireAuraActive) {
+            if (System.currentTimeMillis() - lastAuraDamageTime > 500) { // Každou půl sekundu
+                for (Enemy enemy : enemies) {
+                    double dist = Math.hypot(enemy.x - player.x, enemy.y - player.y);
+                    if (dist <= player.AURA_RADIUS + 15) {
+                        enemy.hp -= 15; // Damage per tick
+                        // Drobný knockback
+                        double dx = enemy.x - player.x;
+                        double dy = enemy.y - player.y;
+                        if(dist > 0) {
+                            enemy.x += (dx / dist) * 5.0;
+                            enemy.y += (dy / dist) * 5.0;
+                        }
+                    }
+                }
+                lastAuraDamageTime = System.currentTimeMillis();
             }
         }
 
@@ -325,7 +371,6 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                 if (enemy.getHitbox().intersects(wall.getHitbox())) {
                     double wallCenterX = wall.x + (wall.width / 2.0);
                     double wallCenterY = wall.y + (wall.height / 2.0);
-
                     double dx = enemy.x - wallCenterX;
                     double dy = enemy.y - wallCenterY;
                     double dist = Math.hypot(dx, dy);
@@ -363,11 +408,9 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
         Graphics2D g2 = (Graphics2D) g;
-
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 
-        // OPRAVA: Pevné zjištění reálné velikosti panelu, aby UI neuteklo mimo
         int realW = getWidth();
         int realH = getHeight();
         float scale = Math.min((float) realW / 800f, (float) realH / 600f);
@@ -421,9 +464,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         }
 
         if (gameState == State.SETTINGS) {
-            if (settingsScreen != null) {
-                settingsScreen.draw(g2, realW, realH);
-            }
+            if (settingsScreen != null) settingsScreen.draw(g2, realW, realH);
             return;
         }
 
@@ -469,44 +510,13 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         g2.setColor(currentWave > 3 ? Color.MAGENTA : Color.ORANGE);
         g2.drawString(waveText, (realW - fmUI.stringWidth(waveText)) / 2, (int)(30 * scale));
 
-        if (currentWave == 1 && showTutorial) {
-            int tutWidth = (int)(450 * scale);
-            int tutHeight = (int)(140 * scale);
-            int tutX = (realW - tutWidth) / 2;
-            int tutY = (int)(60 * scale);
-
-            g2.setColor(new Color(0, 0, 0, 200));
-            g2.fillRoundRect(tutX, tutY, tutWidth, tutHeight, 20, 20);
-            g2.setColor(Color.WHITE);
-            g2.setStroke(new BasicStroke(2));
-            g2.drawRoundRect(tutX, tutY, tutWidth, tutHeight, 20, 20);
-
-            g2.setFont(new Font("Arial", Font.BOLD, (int)(18 * scale)));
-            g2.setColor(Color.YELLOW);
-            g2.drawString("💡 JAK HRÁT", tutX + (int)(20 * scale), tutY + (int)(30 * scale));
-
-            g2.setFont(new Font("Arial", Font.PLAIN, (int)(12 * scale)));
-            g2.setColor(Color.GRAY);
-            g2.drawString("[ Stiskni T pro skrytí ]", tutX + tutWidth - (int)(140 * scale), tutY + (int)(30 * scale));
-
-            g2.setFont(new Font("Arial", Font.PLAIN, (int)(15 * scale)));
-            g2.setColor(Color.WHITE);
-            g2.drawString("⌨️ [ W A S D ] - Pohyb postavy", tutX + (int)(20 * scale), tutY + (int)(60 * scale));
-            g2.drawString("🖱️ [ Levé Tlačítko ] - Míření a střelba", tutX + (int)(20 * scale), tutY + (int)(85 * scale));
-            g2.drawString("🔢 [ 1, 2, 3, 4 ] - Přepínání schopností", tutX + (int)(20 * scale), tutY + (int)(110 * scale));
-
-            g2.setColor(Color.CYAN);
-            g2.setFont(new Font("Arial", Font.ITALIC, (int)(13 * scale)));
-            g2.drawString("Tip: Diváci na Discordu mohou psát příkaz /vote !", tutX + (int)(20 * scale), tutY + (int)(132 * scale));
-        }
-
         if (player != null) {
             g2.setFont(new Font("Arial", Font.BOLD, uiFontSize));
             String weaponName = switch (player.activeWeapon) {
                 case 1 -> "Ohnivá střela";
                 case 2 -> "Zmrazení";
                 case 3 -> "Větrný Štít";
-                case 4 -> "Zeď";
+                case 4 -> "Ohnivá Aura";
                 default -> "Neznámá";
             };
 
@@ -516,16 +526,15 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
             if (swapCd > 0) {
                 g2.setColor(Color.YELLOW);
-                g2.drawString("Výměna zbraně: " + String.format("%.1f", swapCd / 1000.0) + "s", 15, yOffset);
+                g2.drawString("Výměna zbraně: " + (Math.round(swapCd / 100.0) / 10.0) + "s", 15, yOffset);
             } else if (cd > 0) {
                 g2.setColor(Color.RED);
-                g2.drawString("Zbraň: " + weaponName + " [ ČEKÁ: " + String.format("%.1f", cd / 1000.0) + "s ]", 15, yOffset);
+                g2.drawString("Zbraň: " + weaponName + " [ ČEKÁ: " + (Math.round(cd / 100.0) / 10.0) + "s ]", 15, yOffset);
             } else {
                 g2.setColor(Color.GREEN);
                 g2.drawString("Zbraň: " + weaponName + " [ PŘIPRAVENO ]", 15, yOffset);
             }
 
-            // OPRAVA SPODNÍ LIŠTY: Vypočítáme pozici absolutně od spodního okraje okna (realH)
             int barHeight = (int)(50 * scale);
             int barY = realH - barHeight;
 
@@ -534,10 +543,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
             g2.setFont(new Font("Arial", Font.BOLD, (int)(16 * scale)));
             FontMetrics fmSkills = g2.getFontMetrics();
-
-            // Text bude v centru tohoto černého pruhu, takže nikdy neuteče z obrazovky
             int bottomY = barY + (barHeight / 2) + (fmSkills.getAscent() / 3);
-
             int sectionWidth = realW / 4;
 
             g2.setColor(player.activeWeapon == 1 ? Color.YELLOW : Color.GRAY);
@@ -557,8 +563,8 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             }
 
             if (currentWave >= 4) {
-                g2.setColor(player.activeWeapon == 4 ? new Color(139, 69, 19) : Color.GRAY);
-                String skill4 = "[4] Zeď";
+                g2.setColor(player.activeWeapon == 4 ? new Color(255, 100, 0) : Color.GRAY);
+                String skill4 = "[4] Aura";
                 g2.drawString(skill4, (sectionWidth * 3) + (sectionWidth - fmSkills.stringWidth(skill4))/2, bottomY);
             }
         }
@@ -577,8 +583,10 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             } else if (player.activeWeapon == 3) {
                 player.activateShield(3000, enemies);
             } else if (player.activeWeapon == 4) {
-                walls.add(new Wall(e.getX(), e.getY()));
-                player.useAbility();
+
+                // AKTIVACE OHNIVÉ AURY
+                player.activateFireAura(5000);
+
             }
         }
     }
@@ -616,9 +624,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                 return;
             }
 
-            if (key == KeyEvent.VK_T) {
-                showTutorial = false;
-            }
+            if (key == KeyEvent.VK_T) showTutorial = false;
 
             if (key == KeyEvent.VK_W || key == KeyEvent.VK_UP) up = true;
             if (key == KeyEvent.VK_S || key == KeyEvent.VK_DOWN) down = true;
@@ -648,30 +654,5 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
     public int getCurrentWave() {
         return currentWave;
-    }
-
-    public void spawnWallFromDiscord() {
-        if (gameState != State.PLAYING || isGameOver || player == null) return;
-        double rx = player.x + (Math.random() * 300 - 150);
-        double ry = player.y + (Math.random() * 300 - 150);
-        walls.add(new Wall((int)rx, (int)ry));
-    }
-
-    public void freezeEnemiesFromDiscord() {
-        if (gameState != State.PLAYING || isGameOver) return;
-        for (Enemy enemy : enemies) {
-            enemy.freeze(3000);
-        }
-    }
-
-    public void triggerDiscordAction(String text, Runnable action) {
-        this.discordMsg = text;
-        this.msgTimer = System.currentTimeMillis() + 4000;
-        action.run();
-    }
-
-    public void activateTrollMode(int durationMs) {
-        this.invertedControls = true;
-        this.trollTimer = System.currentTimeMillis() + durationMs;
     }
 }
