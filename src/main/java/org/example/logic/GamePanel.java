@@ -66,7 +66,8 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                 String token = dotenv.get("DISCORD_TOKEN");
 
                 if (token != null && !token.isEmpty()) {
-                    discordManager = new DiscordManager(this, token);
+                    discordManager = new DiscordManager(this, "ws://localhost:8765");
+                    discordManager.connect(); // Zapne naslouchání
                 } else {
                     System.out.println("⚠️ DISCORD_TOKEN v .env nenalezen, chat akce nebudou fungovat.");
                 }
