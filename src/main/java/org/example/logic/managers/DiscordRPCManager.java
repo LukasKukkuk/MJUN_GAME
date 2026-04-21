@@ -15,18 +15,17 @@ public class DiscordRPCManager {
     private static IPCClient client;
     private static boolean initialized = false;
 
-    // Odstraněno 'final', aby to šlo bezpečně načíst
     private static long APPLICATION_ID = 0;
     private static long startTimestamp = 0;
 
-    // Statický blok pro bezpečné načtení z resources (classpath)
+    // Nová proměnná pro uložení ID hráče
+    private static String discordUserId = null;
+
     static {
         try {
-            // ignoreIfMissing() zajistí, že to nespadne, když se .env nenajde
             Dotenv dotenv = Dotenv.configure().ignoreIfMissing().load();
             String appToken = dotenv.get("APPLICATION_TOKEN");
 
-            // Ochrana proti NullPointerException
             if (appToken != null && !appToken.isEmpty()) {
                 APPLICATION_ID = Long.parseLong(appToken.replace("L", "").replace("l", ""));
             } else {
@@ -37,8 +36,12 @@ public class DiscordRPCManager {
         }
     }
 
+    // Náš nový "most" pro získání ID do WebSockets
+    public static String getUserId() {
+        return discordUserId;
+    }
+
     public static void start() {
-        // Pokud se ID nenačetlo, nepokoušíme se připojit (zabraní to pádu)
         if (APPLICATION_ID == 0) {
             System.out.println("⚠️ Discord RPC zrušeno: Chybí platné APPLICATION_ID.");
             return;
@@ -53,6 +56,12 @@ public class DiscordRPCManager {
                     System.out.println("✅ Osobní Discord RPC úspěšně napojeno na váš profil!");
                     initialized = true;
                     startTimestamp = OffsetDateTime.now().toEpochSecond();
+
+                    // Vytáhneme si ID z běžícího Discordu
+                    if (client.getCurrentUser() != null) {
+                        discordUserId = client.getCurrentUser().getId();
+                        System.out.println("👤 Automaticky detekováno Discord ID hráče: " + discordUserId);
+                    }
                 }
 
                 @Override public void onClose(IPCClient client, JsonObject json) {}
@@ -62,10 +71,7 @@ public class DiscordRPCManager {
                 @Override public void onPacketReceived(IPCClient client, Packet packet) {}
                 @Override public void onActivityJoin(IPCClient client, String secret) {}
                 @Override public void onActivitySpectate(IPCClient client, String secret) {}
-
-                @Override
-                public void onActivityJoinRequest(IPCClient ipcClient, String s, User user) {}
-
+                @Override public void onActivityJoinRequest(IPCClient ipcClient, String s, User user) {}
                 public void onActivityJoinRequest(IPCClient client, JsonObject request) {}
             });
 
