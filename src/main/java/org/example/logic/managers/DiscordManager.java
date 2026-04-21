@@ -22,7 +22,14 @@ public class DiscordManager extends WebSocketClient {
     public void onOpen(ServerHandshake handshakeData) {
         System.out.println("🌐 ✅ Úspěšně připojeno k Python centrálnímu botovi!");
 
-        // Zde v budoucnu můžeme odeslat JSON s Discord ID hráče pro statistiky
+        // 📦 Java Vytváří a odesílá svůj první JSON!
+        JsonObject welcomeMsg = new JsonObject();
+        welcomeMsg.addProperty("type", "hello");
+        welcomeMsg.addProperty("message", "Hra se úspěšně nastartovala!");
+        // Později sem můžeme přidat i: welcomeMsg.addProperty("discord_id", "12345");
+
+        // Odeslání do Pythonu
+        send(welcomeMsg.toString());
     }
 
     @Override
