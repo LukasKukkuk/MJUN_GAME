@@ -63,16 +63,30 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
         new Thread(() -> {
             try {
+                // NEJPRVE SPUSTÍME LOKÁLNÍ DISCORD (kvůli získání ID)
+                DiscordRPCManager.start();
+
+                // Počkáme sekundu, než se načte profil hráče z Discordu
+                Thread.sleep(1000);
+
+                // Načteme konfiguraci (i když už asi token pro websocket nepotřebuješ, nechávám)
                 Dotenv dotenv = Dotenv.configure().ignoreIfMissing().load();
                 String token = dotenv.get("DISCORD_TOKEN");
+
                 if (token != null && !token.isEmpty()) {
-                    discordManager = new DiscordManager(this, "ws://localhost:8765");
+                    // ZDE JE NOVÁ ADRESA NA HOSTING
+                    discordManager = new DiscordManager(this, "ws://212.227.7.153:11536");
                     discordManager.connect();
+
+                    // Pokus o odeslání ID hned po připojení
+                    String discordId = DiscordRPCManager.getUserId();
+                    if (discordId != null && !discordId.isEmpty()) {
+                        System.out.println("🌐 Odesílám Discord ID botovi na hostingu: " + discordId);
+                    }
                 }
             } catch (Exception e) {
-                System.out.println("⚠️ Nepodařilo se načíst konfiguraci pro Discord bota.");
+                System.out.println("⚠️ Nepodařilo se připojit k botovi na hostingu: " + e.getMessage());
             }
-            DiscordRPCManager.start();
         }).start();
     }
 
