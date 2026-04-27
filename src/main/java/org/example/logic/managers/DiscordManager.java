@@ -2,7 +2,7 @@ package org.example.logic.managers;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import org.example.logic.GamePanel;
+import org.example.logic.core.GamePanel;
 import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.handshake.ServerHandshake;
 

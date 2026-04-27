@@ -1,4 +1,4 @@
-package org.example.logic;
+package org.example.logic.core;
 
 import javax.swing.*;
 import java.awt.*;

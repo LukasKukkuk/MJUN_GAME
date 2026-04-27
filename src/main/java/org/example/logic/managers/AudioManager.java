@@ -10,9 +10,11 @@ public class AudioManager {
     private int currentVolume = 100;
     private String currentPlayingPath = null;
 
+    // Nový kanál speciálně pro dabing
+    private Clip voiceClip;
+
     public void preloadAudio() {
         System.out.println("Načítám hudbu do paměti...");
-        // Vráceno na čisté MP3 soubory
         String[] tracks = {"/menu.mp3", "/level1.mp3", "/level2.mp3", "/level3boss.mp3", "/gameover.mp3"};
 
         for (String path : tracks) {
@@ -22,7 +24,6 @@ public class AudioManager {
 
                 AudioInputStream in = AudioSystem.getAudioInputStream(url);
 
-                // Čisté dekódování MP3
                 AudioFormat baseFormat = in.getFormat();
                 AudioFormat decodedFormat = new AudioFormat(
                         AudioFormat.Encoding.PCM_SIGNED, baseFormat.getSampleRate(), 16,
@@ -49,7 +50,6 @@ public class AudioManager {
 
     public void playMenuMusic() { playMusic("/menu.mp3", true); }
 
-    // Vráceno na gameover.mp3
     public void playGameOverMusic() { playMusic("/gameover.mp3", true); }
 
     public void stopMusic() {
@@ -84,6 +84,33 @@ public class AudioManager {
                 float db = (float) (Math.log10(currentVolume / 100.0) * 20.0);
                 gainControl.setValue(Math.max(gainControl.getMinimum(), db));
             }
+        }
+    }
+
+    // --- NOVÉ METODY PRO DABING ---
+    public void playVoice(String filePath) {
+        try {
+            stopVoice(); // Zastaví předchozí větu, pokud hráč klikl moc rychle
+            URL url = getClass().getResource(filePath);
+            if (url == null) return;
+
+            AudioInputStream audioIn = AudioSystem.getAudioInputStream(url);
+            voiceClip = AudioSystem.getClip();
+            voiceClip.open(audioIn);
+
+            // Nastavíme hlasitost dabingu naplno
+            FloatControl gainControl = (FloatControl) voiceClip.getControl(FloatControl.Type.MASTER_GAIN);
+            gainControl.setValue(0.0f);
+
+            voiceClip.start();
+        } catch (Exception e) {
+            System.out.println("Nepodařilo se přehrát dabing: " + filePath);
+        }
+    }
+
+    public void stopVoice() {
+        if (voiceClip != null && voiceClip.isRunning()) {
+            voiceClip.stop();
         }
     }
 }

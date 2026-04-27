@@ -1,7 +1,6 @@
-package org.example.logic;
+package org.example.logic.core;
 
 import org.example.logic.managers.AudioManager;
-import org.example.logic.managers.ConfigManager;
 
 import java.awt.*;
 import java.awt.event.KeyEvent;

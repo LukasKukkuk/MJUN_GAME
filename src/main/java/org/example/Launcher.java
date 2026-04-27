@@ -1,6 +1,8 @@
 package org.example;
 
-import org.example.logic.*;
+import org.example.logic.core.ConfigManager;
+import org.example.logic.core.GamePanel;
+import org.example.logic.core.GameWindow;
 import org.example.logic.managers.*;
 import javax.swing.SwingUtilities;
 

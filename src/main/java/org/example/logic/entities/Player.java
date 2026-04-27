@@ -1,4 +1,4 @@
-package org.example.logic;
+package org.example.logic.entities;
 
 import java.awt.*;
 import java.util.List;
@@ -13,17 +13,20 @@ public class Player {
     private long lastHitTime = 0;
 
     public int level = 1;
-
     public int activeWeapon = 1;
+
+    // --- NOVÉ: Proměnné pro upgrady ---
+    public int bonusDamage = 0;
+    public double bonusSpeed = 0.0;
 
     // OBRANNÉ SCHOPNOSTI
     public boolean isShieldActive = false;
     private long shieldEndTime = 0;
 
-    // NOVINKA: Ohnivá aura
+    // Ohnivá aura
     public boolean isFireAuraActive = false;
     private long fireAuraEndTime = 0;
-    public double auraAngle = 0; // Pro rotaci ohnivých koulí
+    public double auraAngle = 0;
     public final int AURA_RADIUS = 50;
 
     private long[] abilityCooldowns = {0, 0, 5000, 10000, 8000};
@@ -42,6 +45,21 @@ public class Player {
         this.x = x;
         this.y = y;
     }
+
+    // --- NOVÉ: Metody pro upgrady ---
+    public void upgradeHp() {
+        this.maxHp += 20;
+        this.hp += 20;
+    }
+
+    public void upgradeDamage() {
+        this.bonusDamage += 10;
+    }
+
+    public void upgradeSpeed() {
+        this.bonusSpeed += 0.5;
+    }
+    // ---------------------------------
 
     public void setAnimations(Image[] frames) {
         this.frames = frames;
@@ -65,16 +83,15 @@ public class Player {
         double moveX = 0;
         double moveY = 0;
 
-        // HLÍDÁNÍ TRVÁNÍ SCHOPNOSTÍ
         long currentTime = System.currentTimeMillis();
         if (currentTime >= shieldEndTime) isShieldActive = false;
         if (currentTime >= fireAuraEndTime) isFireAuraActive = false;
 
-        // ZPOMALENÍ (Pokud běží Ohnivá Aura, hráč je o 50% pomalejší)
-        double currentSpeed = this.speed;
+        // Rychlost ovlivněná upgrady a aurou
+        double currentSpeed = this.speed + this.bonusSpeed;
         if (isFireAuraActive) {
             currentSpeed *= 0.5;
-            auraAngle += 0.1; // Rotace koulí
+            auraAngle += 0.1;
         }
 
         boolean actualUp = inverted ? down : up;
@@ -159,12 +176,9 @@ public class Player {
         useAbility();
     }
 
-    // NOVÁ METODA PRO OHNIVOU AURU
     public void activateFireAura(long durationMillis) {
         isFireAuraActive = true;
         fireAuraEndTime = System.currentTimeMillis() + durationMillis;
-
-        // Aplikujeme dlouhé cooldowny
         useAbility(8000);
         setSwapCooldown(5000);
     }
@@ -172,7 +186,6 @@ public class Player {
     public void draw(Graphics2D g2) {
         boolean isBlinking = System.currentTimeMillis() - lastHitTime < 1000 && (System.currentTimeMillis() / 100) % 2 == 0;
 
-        // VYKRESLENÍ HRÁČE
         if (isBlinking) {
             g2.setColor(Color.WHITE);
             g2.fillRect((int) x, (int) y, size, size);
@@ -183,7 +196,6 @@ public class Player {
             g2.fillRect((int) x, (int) y, size, size);
         }
 
-        // VYKRESLENÍ ŠTÍTU (Vítr)
         if (isShieldActive) {
             g2.setColor(new Color(173, 216, 230, 120));
             int shieldRadius = size + 40;
@@ -192,12 +204,10 @@ public class Player {
             g2.drawOval((int) x - 20, (int) y - 20, shieldRadius, shieldRadius);
         }
 
-        // VYKRESLENÍ OHNIVÉ AURY (Rotující koule)
         if (isFireAuraActive) {
             int centerX = (int) x + size / 2;
             int centerY = (int) y + size / 2;
 
-            // Nakreslíme 3 ohnivé koule
             for (int i = 0; i < 3; i++) {
                 double angleOffset = auraAngle + (i * (2 * Math.PI / 3));
                 int ballX = centerX + (int) (Math.cos(angleOffset) * AURA_RADIUS) - 8;
@@ -208,16 +218,14 @@ public class Player {
                 g2.setColor(Color.YELLOW);
                 g2.drawOval(ballX, ballY, 16, 16);
             }
-            // Jemný kruh naznačující reálný dosah plamene
             g2.setColor(new Color(255, 50, 0, 40));
             g2.fillOval(centerX - AURA_RADIUS - 8, centerY - AURA_RADIUS - 8, (AURA_RADIUS+8)*2, (AURA_RADIUS+8)*2);
         }
 
-        // HP BAR
         g2.setColor(Color.BLACK);
         g2.drawRect((int) x, (int) y - 15, size, 6);
         g2.setColor(Color.GREEN);
-        if (hp < 40) g2.setColor(Color.RED);
+        if (hp < (maxHp * 0.4)) g2.setColor(Color.RED);
         int hpWidth = (int) ((hp / (double) maxHp) * size);
         if (hpWidth < 0) hpWidth = 0;
         g2.fillRect((int) x + 1, (int) y - 14, hpWidth - 1, 5);

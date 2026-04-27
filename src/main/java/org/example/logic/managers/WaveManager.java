@@ -1,6 +1,6 @@
 package org.example.logic.managers;
 
-import org.example.logic.Enemy;
+import org.example.logic.entities.Enemy;
 import org.example.logic.enums.Type;
 import java.util.concurrent.CopyOnWriteArrayList;
 

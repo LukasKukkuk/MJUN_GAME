@@ -1,4 +1,4 @@
-package org.example.logic.managers;
+package org.example.logic.core;
 
 import java.io.FileInputStream;
 import java.io.FileOutputStream;

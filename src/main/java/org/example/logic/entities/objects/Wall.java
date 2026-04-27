@@ -1,4 +1,4 @@
-package org.example.logic;
+package org.example.logic.entities.objects;
 import java.awt.*;
 
 public class Wall {

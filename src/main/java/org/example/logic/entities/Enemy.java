@@ -1,6 +1,7 @@
-package org.example.logic;
+package org.example.logic.entities;
 
 import org.example.logic.enums.Type;
+import org.example.logic.entities.objects.Projectile;
 
 import java.awt.*;
 import java.util.List;
