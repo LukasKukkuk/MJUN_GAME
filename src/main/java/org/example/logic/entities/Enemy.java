@@ -1,177 +1,113 @@
 package org.example.logic.entities;
 
-import org.example.logic.enums.Type;
 import org.example.logic.entities.objects.Projectile;
-
+import org.example.logic.enums.Type;
 import java.awt.*;
-import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 public class Enemy {
+    public enum EnemyType { MELEE, SHOOTER, KAMIKAZE, TANK }
+
     public double x, y;
     public int size = 30;
-    public double speed;
-    public int maxHp;
-    public int hp;
+    public double speed = 2.0;
+    public int hp = 100;
+    public int maxHp = 100;
     public Type type;
+    public EnemyType enemyType;
 
+    private boolean isFrozen = false;
     private long freezeEndTime = 0;
     private long dotEndTime = 0;
-    private long lastDotTickTime = 0;
-    private double flankAngle = Math.random() * 2 * Math.PI; // Náhodný úhel pro obkličování
-    private double angleSpeed = (Math.random() * 0.02) - 0.01; // Rychlost kroužení
+    private long lastDotTick = 0;
+    private long lastShotTime = 0;
 
-    // Proměnné pro střely nepřátel
-    private long lastShootTime = 0;
-    private long shootCooldown;
+    public Enemy(double x, double y, Type type, int wave) {
+        this.x = x; this.y = y; this.type = type;
 
-    public Enemy(double x, double y, Type type, int currentWave) {
-        this.x = x;
-        this.y = y;
-        this.type = type;
-
-        // Škálování podle vln (v Endless módu mají mnohem více životů)
-        int waveBonusHp = (currentWave > 3) ? (currentWave - 3) * 20 : 0;
-
-        if (type == Type.THIEVES) {
-            this.maxHp = 100 + waveBonusHp;
-            this.speed = 1.5 + (currentWave * 0.05);
-        } else if (type == Type.BANDITS) {
-            this.maxHp = 120 + waveBonusHp;
-            this.speed = 1.2 + (currentWave * 0.05);
-            this.shootCooldown = 2500; // Střílí každé 2.5s
-        } else if (type == Type.ARCHERS) {
-            this.maxHp = 70 + waveBonusHp;
-            this.speed = 1.8 + (currentWave * 0.05); // Jsou rychlí
-            this.shootCooldown = 1500; // Střílí každých 1.5s
+        // Rozhodnutí o typu nepřítele na základě náhody a vlny
+        double rand = Math.random();
+        if (wave >= 2 && rand < 0.2) {
+            this.enemyType = EnemyType.SHOOTER;
+            this.speed = 1.5;
+            this.hp = 80 + (wave * 15);
+            this.color = Color.MAGENTA;
+        } else if (wave >= 3 && rand > 0.8) {
+            this.enemyType = EnemyType.KAMIKAZE;
+            this.speed = 4.5; // Velmi rychlý
+            this.hp = 50 + (wave * 10);
+            this.color = Color.YELLOW;
+            this.size = 20; // Menší
+        } else if (wave >= 4 && rand > 0.6 && rand <= 0.8) {
+            this.enemyType = EnemyType.TANK;
+            this.speed = 1.0; // Pomalý
+            this.hp = 300 + (wave * 40); // Hodně HP
+            this.size = 50; // Velký
+            this.color = new Color(0, 100, 0); // Tmavě zelená
+        } else {
+            this.enemyType = EnemyType.MELEE;
+            this.speed = 2.0 + (wave * 0.1);
+            this.hp = 100 + (wave * 20);
+            this.color = Color.RED;
         }
 
-        this.hp = this.maxHp;
+        this.maxHp = this.hp;
     }
 
-    public void freeze(long durationMillis) {
-        freezeEndTime = System.currentTimeMillis() + durationMillis;
-    }
+    private Color color;
 
-    public boolean isFrozen() {
-        return System.currentTimeMillis() < freezeEndTime;
-    }
+    public void update(double px, double py, CopyOnWriteArrayList<Enemy> others, CopyOnWriteArrayList<Projectile> enemyProjectiles) {
+        long currentTime = System.currentTimeMillis();
 
-    public void startDotDamage(long durationMillis) {
-        dotEndTime = System.currentTimeMillis() + durationMillis;
-        lastDotTickTime = System.currentTimeMillis();
-    }
+        if (isFrozen && currentTime > freezeEndTime) isFrozen = false;
+        if (currentTime < dotEndTime && currentTime - lastDotTick > 500) { hp -= 5; lastDotTick = currentTime; }
+        if (isFrozen) return;
 
-    // Předáváme i list nepřátelských střel, aby je nepřátelé mohli tvořit
-    public void update(double targetX, double targetY, List<Enemy> allEnemies, List<Projectile> enemyProjectiles) {
-        if (System.currentTimeMillis() < dotEndTime) {
-            if (System.currentTimeMillis() - lastDotTickTime >= 250) {
-                hp -= 1;
-                lastDotTickTime = System.currentTimeMillis();
-            }
-        }
+        double dx = px - x, dy = py - y;
+        double dist = Math.hypot(dx, dy);
 
-        if (isFrozen()) return;
-
-        double dx = targetX - x;
-        double dy = targetY - y;
-        double distance = Math.sqrt(dx * dx + dy * dy);
-
-        double moveX = 0;
-        double moveY = 0;
-
-        // --- ELITE AI LOGIKA ---
-        if (type == Type.THIEVES || type == Type.BANDITS) {
-            // FLANKOVÁNÍ: Nepřátelé nejdou přímo, ale snaží se hráče "obtékat"
-            flankAngle += angleSpeed; // Mírně měníme úhel útoku
-
-            // Cílová pozice není hráč, ale bod kousek vedle něj (podle flankAngle)
-            double offsetDist = (type == Type.THIEVES) ? 20 : 60;
-            double tightTargetX = targetX + Math.cos(flankAngle) * offsetDist;
-            double tightTargetY = targetY + Math.sin(flankAngle) * offsetDist;
-
-            double fdx = tightTargetX - x;
-            double fdy = tightTargetY - y;
-            double fDist = Math.sqrt(fdx * fdx + fdy * fdy);
-
-            if (fDist > 0) {
-                moveX = fdx / fDist;
-                moveY = fdy / fDist;
-            }
-        } else if (type == Type.ARCHERS) {
-            // VYLEPŠENÝ KITING: Lučištník si drží ideální sféru (250-350 px)
-            if (distance < 250) {
-                // Ústup (Kiting)
-                moveX = -(dx / distance);
-                moveY = -(dy / distance);
-            } else if (distance > 400) {
-                // Přiblížení
-                moveX = (dx / distance);
-                moveY = (dy / distance);
-            } else {
-                // Taktické kroužení (udržování pozice a palba)
-                flankAngle += 0.01; // Lučištníci rotují kolem hráče
-                moveX = -dy / distance + (Math.cos(flankAngle) * 0.2);
-                moveY = dx / distance + (Math.sin(flankAngle) * 0.2);
-            }
-        }
-
-        // Aplikace pohybu
-        x += moveX * speed;
-        y += moveY * speed;
-
-        // --- STŘELBA A SEPARACE (Zůstává stejné jako ve vašem kódu) ---
-        long time = System.currentTimeMillis();
-        if (type == Type.BANDITS && distance < 300 && time - lastShootTime > shootCooldown) {
-            enemyProjectiles.add(new Projectile(x + size/2, y + size/2, targetX, targetY, 1, true));
-            lastShootTime = time;
-        } else if (type == Type.ARCHERS && distance < 450 && time - lastShootTime > shootCooldown) {
-            enemyProjectiles.add(new Projectile(x + size/2, y + size/2, targetX, targetY, 1, true));
-            lastShootTime = time;
-        }
-
-        // Zamezení procházení nepřátel sebou navzájem
-        for (Enemy other : allEnemies) {
-            if (other == this) continue;
-            double distX = x - other.x;
-            double distY = y - other.y;
-            double dist = Math.sqrt(distX * distX + distY * distY);
-
-            if (dist < size) {
-                double overlap = size - dist;
-                if (dist == 0) {
-                    distX = Math.random() - 0.5; distY = Math.random() - 0.5;
-                    dist = Math.sqrt(distX * distX + distY * distY);
+        if (dist > 0) {
+            // Logika střelce (udržuje odstup a střílí)
+            if (enemyType == EnemyType.SHOOTER) {
+                if (dist > 200) {
+                    x += (dx / dist) * speed; y += (dy / dist) * speed;
+                } else if (dist < 150) { // Utíká, když jsi moc blízko
+                    x -= (dx / dist) * speed; y -= (dy / dist) * speed;
                 }
-                x += (distX / dist) * overlap * 0.1;
-                y += (distY / dist) * overlap * 0.1;
+                // Střelba
+                if (currentTime - lastShotTime > 2000) {
+                    enemyProjectiles.add(new Projectile(x + size/2.0, y + size/2.0, px, py, 1, true));
+                    lastShotTime = currentTime;
+                }
+            } else {
+                // Ostatní jdou přímo za hráčem
+                x += (dx / dist) * speed; y += (dy / dist) * speed;
+            }
+        }
+
+        // Vyhýbání se ostatním nepřátelům
+        for (Enemy other : others) {
+            if (other != this) {
+                double odx = x - other.x, ody = y - other.y;
+                double odist = Math.hypot(odx, ody);
+                if (odist < size) { x += (odx / odist) * 1.5; y += (ody / odist) * 1.5; }
             }
         }
     }
+
+    public void freeze(long duration) { this.isFrozen = true; this.freezeEndTime = System.currentTimeMillis() + duration; }
+    public void startDotDamage(long duration) { this.dotEndTime = System.currentTimeMillis() + duration; }
+    public boolean isFrozen() { return isFrozen; }
 
     public void draw(Graphics2D g2) {
-        if (isFrozen()) {
-            if (System.currentTimeMillis() < dotEndTime) {
-                g2.setColor(new Color(50, 255, 200));
-            } else {
-                g2.setColor(new Color(100, 200, 255));
-            }
-        } else {
-            // Barva podle typu
-            if (type == Type.THIEVES) g2.setColor(Color.RED);
-            else if (type == Type.BANDITS) g2.setColor(Color.YELLOW);
-            else if (type == Type.ARCHERS) g2.setColor(new Color(128, 0, 128)); // Fialová
-        }
+        if (isFrozen) g2.setColor(Color.CYAN);
+        else if (enemyType == EnemyType.KAMIKAZE && (System.currentTimeMillis() / 150) % 2 == 0) g2.setColor(Color.WHITE); // Kamikaze bliká
+        else g2.setColor(color);
 
         g2.fillRect((int) x, (int) y, size, size);
-        g2.setColor(Color.BLACK);
-        g2.drawRect((int) x, (int) y - 10, size, 5);
-        g2.setColor(Color.GREEN);
-        int hpWidth = (int) ((hp / (double) maxHp) * size);
-        if (hpWidth < 0) hpWidth = 0;
-        g2.fillRect((int) x + 1, (int) y - 9, hpWidth - 1, 4);
-    }
 
-    public Rectangle getHitbox() {
-        return new Rectangle((int) x, (int) y, size, size);
+        g2.setColor(Color.BLACK); g2.fillRect((int) x, (int) y - 10, size, 5);
+        g2.setColor(Color.RED); g2.fillRect((int) x, (int) y - 10, (int) ((hp / (double) maxHp) * size), 5);
     }
+    public Rectangle getHitbox() { return new Rectangle((int) x, (int) y, size, size); }
 }

@@ -4,6 +4,7 @@ import org.example.Launcher;
 import org.example.logic.entities.Boss;
 import org.example.logic.entities.Enemy;
 import org.example.logic.entities.Player;
+import org.example.logic.entities.objects.Hazard;
 import org.example.logic.entities.objects.Projectile;
 import org.example.logic.entities.objects.Soul;
 import org.example.logic.entities.objects.Wall;
@@ -62,13 +63,14 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     private CopyOnWriteArrayList<Soul> souls = new CopyOnWriteArrayList<>();
     private CopyOnWriteArrayList<LootDrop> lootDrops = new CopyOnWriteArrayList<>();
 
-    // --- VIZUÁLNÍ EFEKTY (Juice) ---
+    // --- SEZNAM PASTÍ (HAZARDS) ---
+    private CopyOnWriteArrayList<Hazard> hazards = new CopyOnWriteArrayList<>();
+
     private CopyOnWriteArrayList<DamageText> damageTexts = new CopyOnWriteArrayList<>();
     private CopyOnWriteArrayList<Particle> particles = new CopyOnWriteArrayList<>();
     private int shakeX = 0, shakeY = 0, shakeDuration = 0, shakeIntensity = 0;
-    private String activeWeaponInfo = ""; // Zpráva o swappnutí
+    private String activeWeaponInfo = "";
 
-    // Vnitřní třída pro plovoucí čísla zranění
     private class DamageText {
         double x, y;
         String text;
@@ -97,7 +99,6 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         }
     }
 
-    // Vnitřní třída pro částice (krev/výbuchy)
     private class Particle {
         double x, y, dx, dy;
         int life = 255;
@@ -124,7 +125,6 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         }
     }
 
-    // --- PROMĚNNÉ PRO CRAFTING MINIGAME ---
     private int mgCursorX = 0;
     private int mgCursorDir = 1;
     private double mgSpeed = 6.0;
@@ -196,6 +196,28 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         this.shakeIntensity = intensity;
     }
 
+    // --- GENEROVÁNÍ PASTÍ ---
+    private void generateHazards() {
+        hazards.clear();
+        if (currentWave >= 2) {
+            int numHazards = Math.min(currentWave + 1, 6); // Max 6 pastí
+            for(int i = 0; i < numHazards; i++) {
+                double hx = Math.random() * (WIDTH - 100) + 50;
+                double hy = Math.random() * (HEIGHT - 100) + 50;
+                // Past nesmí vzniknout přímo na hráči ve středu
+                if (Math.hypot(hx - WIDTH/2.0, hy - HEIGHT/2.0) > 150) {
+                    Hazard.Type type;
+                    double rand = Math.random();
+                    if (rand > 0.6) type = Hazard.Type.SPIKE;
+                    else if (rand > 0.3) type = Hazard.Type.LAVA;
+                    else type = Hazard.Type.BARREL;
+
+                    hazards.add(new Hazard(hx, hy, type));
+                }
+            }
+        }
+    }
+
     private void resetGame(int startWave) {
         currentWave = startWave;
         player = new Player(WIDTH / 2.0, HEIGHT / 2.0);
@@ -210,6 +232,8 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         lootDrops.clear();
         damageTexts.clear();
         particles.clear();
+
+        generateHazards();
 
         inventoryManager = new InventoryManager();
 
@@ -237,71 +261,45 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
     private Item generateRandomItem() {
         int rand = (int) (Math.random() * 100);
-        if (rand < 20) {
-            return Item.createWeaponShard();
-        } else if (rand < 35) {
-            return Item.createHealthHeart();
-        } else if (rand < 50) {
-            return Item.createDamageSword();
-        } else if (rand < 65) {
-            return Item.createSpeedBoots();
-        } else if (rand < 75) {
-            return Item.createBerserkerPotion();
-        } else if (rand < 85) {
-            return Item.createIceCrystal();
-        } else if (rand < 93) {
-            return Item.createWindCrystal();
-        } else {
-            return Item.createFireCrystal();
-        }
+        if (rand < 20) return Item.createWeaponShard();
+        if (rand < 35) return Item.createHealthHeart();
+        if (rand < 50) return Item.createDamageSword();
+        if (rand < 65) return Item.createSpeedBoots();
+        if (rand < 75) return Item.createBerserkerPotion();
+        if (rand < 85) return Item.createIceCrystal();
+        if (rand < 93) return Item.createWindCrystal();
+        return Item.createFireCrystal();
     }
 
     public void spawnSoulFromDiscord() {
-        if (gameState != State.PLAYING || isGameOver || player == null) {
-            return;
-        }
+        if (gameState != State.PLAYING || isGameOver || player == null) return;
         double rx = player.x + (Math.random() * 200 - 100);
         double ry = player.y + (Math.random() * 200 - 100);
         souls.add(new Soul(rx, ry));
     }
 
     public void spawnEnemyFromDiscord() {
-        if (gameState != State.PLAYING || isGameOver || player == null) {
-            return;
-        }
+        if (gameState != State.PLAYING || isGameOver || player == null) return;
         enemies.add(new Enemy(player.x + (Math.random() * 400 - 200), player.y + (Math.random() * 400 - 200), Type.THIEVES, currentWave));
     }
 
     public void spawnHorde() {
         new Thread(() -> {
             try {
-                for (int i = 0; i < 10; i++) {
-                    spawnEnemyFromDiscord();
-                    Thread.sleep(200);
-                }
+                for (int i = 0; i < 10; i++) { spawnEnemyFromDiscord(); Thread.sleep(200); }
             } catch (InterruptedException e) {}
         }).start();
     }
 
     public void rageModeFromDiscord() {
-        if (gameState != State.PLAYING || isGameOver) {
-            return;
-        }
-        for (Enemy enemy : enemies) {
-            enemy.hp += 50;
-        }
-        for (int i = 0; i < 3; i++) {
-            spawnEnemyFromDiscord();
-        }
+        if (gameState != State.PLAYING || isGameOver) return;
+        for (Enemy enemy : enemies) { enemy.hp += 50; }
+        for (int i = 0; i < 3; i++) spawnEnemyFromDiscord();
     }
 
     public void freezeEnemiesFromDiscord() {
-        if (gameState != State.PLAYING || isGameOver) {
-            return;
-        }
-        for (Enemy enemy : enemies) {
-            enemy.freeze(3000);
-        }
+        if (gameState != State.PLAYING || isGameOver) return;
+        for (Enemy enemy : enemies) { enemy.freeze(3000); }
     }
 
     public void triggerDiscordAction(String text, Runnable action) {
@@ -343,9 +341,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                             audioManager.setVolume(ConfigManager.volume);
                             loadingProgress = 80;
 
-                            if (window != null) {
-                                settingsScreen = new SettingsScreen(audioManager, window);
-                            }
+                            if (window != null) { settingsScreen = new SettingsScreen(audioManager, window); }
 
                             loadingProgress = 100;
                             try { Thread.sleep(300); } catch (Exception e) {}
@@ -354,7 +350,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                         }).start();
                     }
                 }
-                else if (gameState == State.PLAYING && !isGameOver || gameState == State.CUTSCENE || gameState == State.MINIGAME) {
+                else if (gameState == State.PLAYING && !isGameOver || gameState == State.CUTSCENE || gameState == State.MINIGAME || gameState == State.INVENTORY) {
                     update();
                 }
                 repaint();
@@ -368,16 +364,11 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         ConfigManager.save(currentWave);
         audioManager.playMusicForWave(Math.min(currentWave, 3));
 
-        if (player.activeWeapon == 2 && player.level < 2) {
-            player.activeWeapon = 1;
-        }
-        if (player.activeWeapon == 3 && player.level < 3) {
-            player.activeWeapon = 1;
-        }
-        if (player.activeWeapon == 4 && player.level < 4) {
-            player.activeWeapon = 1;
-        }
+        if (player.activeWeapon == 2 && player.level < 2) player.activeWeapon = 1;
+        if (player.activeWeapon == 3 && player.level < 3) player.activeWeapon = 1;
+        if (player.activeWeapon == 4 && player.level < 4) player.activeWeapon = 1;
 
+        generateHazards();
         updateWeaponInfo();
         waveManager.startNextWave(currentWave);
         gameState = State.PLAYING;
@@ -385,26 +376,20 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
     private void startMinigame() {
         gameState = State.MINIGAME;
-        mgCursorX = 0;
-        mgCursorDir = 1;
-        mgSpeed = 6.0;
-        mgSuccessHits = 0;
-        mgTargetW = 120;
+        mgCursorX = 0; mgCursorDir = 1; mgSpeed = 6.0; mgSuccessHits = 0; mgTargetW = 120;
         mgTargetX = (int) (Math.random() * (400 - mgTargetW)) + 100;
         mgMessage = "Zasáhni zelenou zónu (MEZERNÍK)!";
     }
 
     private void update() {
-        if (gameState == State.CUTSCENE) {
-            cutsceneManager.update();
+        if (gameState == State.CUTSCENE || gameState == State.INVENTORY) {
+            if (gameState == State.CUTSCENE) cutsceneManager.update();
             return;
         }
 
         if (gameState == State.MINIGAME) {
             mgCursorX += mgSpeed * mgCursorDir;
-            if (mgCursorX <= 0 || mgCursorX >= 600) {
-                mgCursorDir *= -1;
-            }
+            if (mgCursorX <= 0 || mgCursorX >= 600) mgCursorDir *= -1;
             return;
         }
 
@@ -413,19 +398,14 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             shakeY = (int)(Math.random() * shakeIntensity - shakeIntensity / 2);
             shakeDuration--;
         } else {
-            shakeX = 0;
-            shakeY = 0;
+            shakeX = 0; shakeY = 0;
         }
 
         damageTexts.removeIf(dt -> dt.alpha <= 0);
-        for (DamageText dt : damageTexts) {
-            dt.update();
-        }
+        for (DamageText dt : damageTexts) dt.update();
 
         particles.removeIf(p -> p.life <= 0);
-        for (Particle p : particles) {
-            p.update();
-        }
+        for (Particle p : particles) p.update();
 
         if (System.currentTimeMillis() > trollTimer) {
             invertedControls = false;
@@ -433,16 +413,35 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
         if (player.hp <= 0) {
             if (!isGameOver) {
-                isGameOver = true;
-                isMousePressed = false;
-                audioManager.playGameOverMusic();
-                DiscordRPCManager.updatePresence(currentWave, 0, 0);
+                isGameOver = true; isMousePressed = false;
+                audioManager.playGameOverMusic(); DiscordRPCManager.updatePresence(currentWave, 0, 0);
             }
             return;
         }
 
         player.update(up, down, left, right, WIDTH, HEIGHT, invertedControls);
         waveManager.update(enemies, WIDTH, HEIGHT);
+
+        // --- UPDATE PASTÍ A JEJICH KOLIZÍ S HRÁČEM ---
+        for (Hazard h : hazards) {
+            h.update();
+            if (h.getHitbox().intersects(player.getHitbox())) {
+                if (h.type == Hazard.Type.LAVA && !player.isDashing) {
+                    // Láva dává častý menší damage a zpomaluje
+                    if (System.currentTimeMillis() % 20 == 0) {
+                        player.takeDamage(1);
+                    }
+                } else if (h.type == Hazard.Type.SPIKE && h.isActive && !player.isDashing) {
+                    player.takeDamage(10);
+                    triggerShake(3, 3);
+                    damageTexts.add(new DamageText(player.x, player.y, "-10", Color.RED, true));
+                    // Odrážení od bodáků, aby tam hráč nezůstal stát
+                    player.y += 20;
+                }
+            }
+        }
+
+        hazards.removeIf(h -> h.type == Hazard.Type.BARREL && h.hp <= 0);
 
         if (isMousePressed && player != null && gameState == State.PLAYING) {
             if (player.canUseAbility()) {
@@ -513,11 +512,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
         if (boss != null) {
             boss.update(player, enemyProjectiles);
-            if (boss.hp <= 0) {
-                boss = null;
-                gameState = State.VICTORY;
-                isMousePressed = false;
-            }
+            if (boss.hp <= 0) { boss = null; gameState = State.VICTORY; isMousePressed = false; }
         }
 
         walls.removeIf(Wall::isDead);
@@ -557,6 +552,36 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             }
             if (hitWall) continue;
 
+            // Kolize střel s Barely (Výbuch)
+            boolean hitHazard = false;
+            for (Hazard h : hazards) {
+                if (h.type == Hazard.Type.BARREL && p.getHitbox().intersects(h.getHitbox())) {
+                    h.hp -= 15;
+                    projectiles.remove(p);
+                    hitHazard = true;
+
+                    if (h.hp <= 0) {
+                        triggerShake(10, 8); // Výbuch barely třese obrazovkou
+                        for(int i = 0; i < 30; i++) particles.add(new Particle(h.x + 20, h.y + 20, Color.ORANGE));
+
+                        // Zraní nepřátele okolo
+                        for (Enemy e : enemies) {
+                            if (Math.hypot(e.x - h.x, e.y - h.y) <= 120) {
+                                e.hp -= 100;
+                                damageTexts.add(new DamageText(e.x, e.y, "-100", Color.ORANGE, true));
+                            }
+                        }
+                        // Zraní hráče, pokud stojí moc blízko
+                        if (Math.hypot(player.x - h.x, player.y - h.y) <= 120 && !player.isDashing) {
+                            player.takeDamage(30);
+                            damageTexts.add(new DamageText(player.x, player.y, "-30", Color.RED, true));
+                        }
+                    }
+                    break;
+                }
+            }
+            if (hitHazard) continue;
+
             if (boss != null && p.getHitbox().intersects(boss.getHitbox())) {
                 projectiles.remove(p);
                 if (!boss.isBlocking) {
@@ -582,9 +607,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                         if (player.level >= 3 && p.type == 1) {
                             java.util.ArrayList<Enemy> nearby = new java.util.ArrayList<>();
                             for (Enemy e : enemies) {
-                                if (Math.hypot(e.x - enemy.x, e.y - enemy.y) <= 100) {
-                                    nearby.add(e);
-                                }
+                                if (Math.hypot(e.x - enemy.x, e.y - enemy.y) <= 100) nearby.add(e);
                             }
                             if (nearby.size() >= 4) {
                                 enemy.hp -= dmg;
@@ -603,25 +626,19 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                             enemy.hp -= dmg;
                         }
 
-                        if (p.type == 5) {
-                            enemy.freeze(2000);
-                        }
+                        if (p.type == 5) enemy.freeze(2000);
 
                         damageTexts.add(new DamageText(enemy.x, enemy.y, "-" + dmg, p.type == 5 ? Color.MAGENTA : Color.ORANGE, p.type == 5));
 
-                        double dx = enemy.x - player.x;
-                        double dy = enemy.y - player.y;
+                        double dx = enemy.x - player.x, dy = enemy.y - player.y;
                         double dist = Math.hypot(dx, dy);
                         if (dist > 0) {
-                            enemy.x += (dx / dist) * 15.0;
-                            enemy.y += (dy / dist) * 15.0;
+                            enemy.x += (dx / dist) * 15.0; enemy.y += (dy / dist) * 15.0;
                         }
                     }
                     else if (p.type == 2) {
                         enemy.freeze(2500);
-                        if (player.level >= 3) {
-                            enemy.startDotDamage(2000);
-                        }
+                        if (player.level >= 3) enemy.startDotDamage(2000);
                         damageTexts.add(new DamageText(enemy.x, enemy.y, "MRAZ", Color.CYAN, false));
                     }
                     projectiles.remove(p);
@@ -648,7 +665,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             }
             if (hitWall) continue;
 
-            if (p.getHitbox().intersects(player.getHitbox())) {
+            if (p.getHitbox().intersects(player.getHitbox()) && !player.isDashing) {
                 player.takeDamage(10);
                 enemyProjectiles.remove(p);
                 damageTexts.add(new DamageText(player.x, player.y, "-10", Color.RED, true));
@@ -670,11 +687,9 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                         int dmg = 15 + player.bonusDamage;
                         enemy.hp -= dmg;
                         damageTexts.add(new DamageText(enemy.x, enemy.y, "-" + dmg, Color.ORANGE, false));
-                        double dx = enemy.x - player.x;
-                        double dy = enemy.y - player.y;
                         if (dist > 0) {
-                            enemy.x += (dx / dist) * 5.0;
-                            enemy.y += (dy / dist) * 5.0;
+                            enemy.x += ((enemy.x - player.x) / dist) * 5.0;
+                            enemy.y += ((enemy.y - player.y) / dist) * 5.0;
                         }
                     }
                 }
@@ -692,14 +707,21 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
         for (Enemy enemy : enemies) {
             if (enemy.hp <= 0) {
-                for(int i = 0; i < 10; i++) {
-                    particles.add(new Particle(enemy.x + 15, enemy.y + 15, new Color(150, 0, 0)));
-                }
-
+                for(int i = 0; i < 10; i++) particles.add(new Particle(enemy.x + 15, enemy.y + 15, new Color(150, 0, 0)));
                 souls.add(new Soul(enemy.x, enemy.y));
 
                 if (Math.random() < 0.15) {
                     lootDrops.add(new LootDrop(enemy.x, enemy.y, generateRandomItem()));
+                }
+
+                // Exploze Kamikaze nepřítele po smrti
+                if (enemy.enemyType == Enemy.EnemyType.KAMIKAZE) {
+                    triggerShake(8, 6);
+                    for(int i = 0; i < 20; i++) particles.add(new Particle(enemy.x, enemy.y, Color.YELLOW));
+                    if (Math.hypot(player.x - enemy.x, player.y - enemy.y) <= 80 && !player.isDashing) {
+                        player.takeDamage(25);
+                        damageTexts.add(new DamageText(player.x, player.y, "-25", Color.RED, true));
+                    }
                 }
 
                 enemies.remove(enemy);
@@ -710,24 +732,24 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
             for (Wall wall : walls) {
                 if (enemy.getHitbox().intersects(wall.getHitbox())) {
-                    double wallCenterX = wall.x + (wall.width / 2.0);
-                    double wallCenterY = wall.y + (wall.height / 2.0);
-                    double dx = enemy.x - wallCenterX;
-                    double dy = enemy.y - wallCenterY;
-                    double dist = Math.hypot(dx, dy);
-
+                    double dist = Math.hypot(enemy.x - (wall.x + wall.width / 2.0), enemy.y - (wall.y + wall.height / 2.0));
                     if (dist > 0) {
-                        enemy.x += (dx / dist) * 5.0;
-                        enemy.y += (dy / dist) * 5.0;
+                        enemy.x += ((enemy.x - (wall.x + wall.width / 2.0)) / dist) * 5.0;
+                        enemy.y += ((enemy.y - (wall.y + wall.height / 2.0)) / dist) * 5.0;
                     }
                     wall.hp -= 1;
                 }
             }
 
-            if (enemy.getHitbox().intersects(player.getHitbox()) && !enemy.isFrozen()) {
-                player.takeDamage(15);
-                triggerShake(4, 5);
-                damageTexts.add(new DamageText(player.x, player.y, "-15", Color.RED, true));
+            // Kontakt s Kamikaze hráčem = Rychlý výbuch
+            if (enemy.getHitbox().intersects(player.getHitbox()) && !player.isDashing && !enemy.isFrozen()) {
+                if (enemy.enemyType == Enemy.EnemyType.KAMIKAZE) {
+                    enemy.hp = 0; // Odpálí se sám
+                } else {
+                    player.takeDamage(15);
+                    triggerShake(4, 5);
+                    damageTexts.add(new DamageText(player.x, player.y, "-15", Color.RED, true));
+                }
             }
 
             if (player.isShieldActive) {
@@ -741,10 +763,9 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             }
         }
 
-        long currentTime = System.currentTimeMillis();
-        if (currentTime - lastRpcUpdate >= 2000) {
+        if (System.currentTimeMillis() - lastRpcUpdate >= 2000) {
             DiscordRPCManager.updatePresence(currentWave, player.hp, enemies.size());
-            lastRpcUpdate = currentTime;
+            lastRpcUpdate = System.currentTimeMillis();
         }
     }
 
@@ -798,10 +819,8 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
             g2.setColor(Color.DARK_GRAY);
             g2.fillRect(barX, barY, barWidth, barHeight);
-
             g2.setColor(Color.GREEN);
             g2.fillRect(barX, barY, (int)((loadingProgress / 100.0) * barWidth), barHeight);
-
             g2.setColor(Color.WHITE);
             g2.drawRect(barX, barY, barWidth, barHeight);
             return;
@@ -829,16 +848,13 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             g2.drawString(t1, (realW - fmMenu.stringWidth(t1)) / 2, menuY);
             g2.drawString(t2, (realW - fmMenu.stringWidth(t2)) / 2, menuY + spacing);
             g2.drawString(t3, (realW - fmMenu.stringWidth(t3)) / 2, menuY + spacing * 2);
-
             g2.setColor(Color.YELLOW);
             g2.drawString(t4, (realW - fmMenu.stringWidth(t4)) / 2, menuY + spacing * 3 + 10);
             return;
         }
 
         if (gameState == State.SETTINGS) {
-            if (settingsScreen != null) {
-                settingsScreen.draw(g2, realW, realH);
-            }
+            if (settingsScreen != null) settingsScreen.draw(g2, realW, realH);
             return;
         }
 
@@ -859,40 +875,27 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
         g2.translate(shakeX, shakeY);
 
-        for (Wall w : walls) {
-            w.draw(g2);
-        }
-        for (Soul s : souls) {
-            s.draw(g2);
-        }
-        for (LootDrop drop : lootDrops) {
-            drop.draw(g2);
-        }
-        for (Projectile p : projectiles) {
-            p.draw(g2);
-        }
-        for (Projectile p : enemyProjectiles) {
-            p.draw(g2);
-        }
-        for (Enemy enemy : enemies) {
-            enemy.draw(g2);
-        }
-        for (Particle p : particles) {
-            p.draw(g2);
-        }
+        for (Hazard h : hazards) h.draw(g2); // VYKRESLENÍ PASTÍ NA POZADÍ
+        for (Wall w : walls) w.draw(g2);
+        for (Soul s : souls) s.draw(g2);
+        for (LootDrop drop : lootDrops) drop.draw(g2);
+        for (Projectile p : projectiles) p.draw(g2);
+        for (Projectile p : enemyProjectiles) p.draw(g2);
+        for (Enemy enemy : enemies) enemy.draw(g2);
+        for (Particle p : particles) p.draw(g2);
 
-        if (boss != null) {
-            boss.draw(g2, realH);
-        }
-        if (player != null) {
-            player.draw(g2);
-        }
+        if (boss != null) boss.draw(g2, realH);
+        if (player != null) player.draw(g2);
 
-        for (DamageText dt : damageTexts) {
-            dt.draw(g2);
-        }
+        for (DamageText dt : damageTexts) dt.draw(g2);
 
         g2.translate(-shakeX, -shakeY);
+
+        if (System.currentTimeMillis() < swapTextTimer && player != null) {
+            g2.setFont(new Font("Arial", Font.BOLD, 16));
+            g2.setColor(new Color(255, 255, 0, 200));
+            g2.drawString(activeWeaponInfo, (int)player.x - 20, (int)player.y - 20);
+        }
 
         if (gameState == State.CUTSCENE) {
             cutsceneManager.draw(g2, realW, realH);
@@ -900,16 +903,13 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         }
 
         if (gameState == State.INVENTORY) {
-            inventoryManager.draw(g2, realW, realH);
+            inventoryManager.draw(g2, realW, realH, mouseTargetX, mouseTargetY);
             return;
         }
 
         if (gameState == State.MINIGAME) {
-            g2.setColor(new Color(0, 0, 0, 200));
-            g2.fillRect(0, 0, realW, realH);
-
-            g2.setColor(Color.WHITE);
-            g2.setFont(new Font("Arial", Font.BOLD, 30));
+            g2.setColor(new Color(0, 0, 0, 200)); g2.fillRect(0, 0, realW, realH);
+            g2.setColor(Color.WHITE); g2.setFont(new Font("Arial", Font.BOLD, 30));
             g2.drawString("KOVÁŘSKÁ KOVADLINA", realW / 2 - 160, 150);
 
             g2.setFont(new Font("Arial", Font.PLAIN, 20));
@@ -919,35 +919,23 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             for (int i = 0; i < 3; i++) {
                 g2.setColor(i < mgSuccessHits ? Color.GREEN : Color.DARK_GRAY);
                 g2.fillOval(realW / 2 - 60 + (i * 40), 240, 20, 20);
-                g2.setColor(Color.WHITE);
-                g2.drawOval(realW / 2 - 60 + (i * 40), 240, 20, 20);
+                g2.setColor(Color.WHITE); g2.drawOval(realW / 2 - 60 + (i * 40), 240, 20, 20);
             }
 
-            int barX = realW / 2 - 300;
-            int barY = 320;
-
-            g2.setColor(Color.GRAY);
-            g2.fillRect(barX, barY, 600, 40);
-
-            g2.setColor(Color.GREEN);
-            g2.fillRect(barX + mgTargetX, barY, mgTargetW, 40);
-
-            g2.setColor(Color.WHITE);
-            g2.fillRect(barX + mgCursorX - 5, barY - 10, 10, 60);
+            int barX = realW / 2 - 300, barY = 320;
+            g2.setColor(Color.GRAY); g2.fillRect(barX, barY, 600, 40);
+            g2.setColor(Color.GREEN); g2.fillRect(barX + mgTargetX, barY, mgTargetW, 40);
+            g2.setColor(Color.WHITE); g2.fillRect(barX + mgCursorX - 5, barY - 10, 10, 60);
             return;
         }
 
         if (gameState == State.VICTORY) {
-            g2.setColor(new Color(0, 0, 0, 220));
-            g2.fillRect(0, 0, realW, realH);
-
-            g2.setColor(Color.YELLOW);
-            g2.setFont(new Font("Arial", Font.BOLD, (int)(40 * scale)));
+            g2.setColor(new Color(0, 0, 0, 220)); g2.fillRect(0, 0, realW, realH);
+            g2.setColor(Color.YELLOW); g2.setFont(new Font("Arial", Font.BOLD, (int)(40 * scale)));
             String t = "BOSS PORAŽEN!";
             g2.drawString(t, (realW - g2.getFontMetrics().stringWidth(t)) / 2, realH/4);
 
-            g2.setColor(Color.WHITE);
-            g2.setFont(new Font("Arial", Font.PLAIN, (int)(20 * scale)));
+            g2.setColor(Color.WHITE); g2.setFont(new Font("Arial", Font.PLAIN, (int)(20 * scale)));
             g2.drawString("[1] Jít do Endless módu (Ponechat si Vybavení)", realW/2 - (int)(220*scale), realH/2);
             g2.drawString("[2] Jít do Endless módu Čistý (Hardcore)", realW/2 - (int)(220*scale), realH/2 + (int)(50*scale));
             g2.drawString("[3] Zpět do Menu", realW/2 - (int)(220*scale), realH/2 + (int)(100*scale));
@@ -956,11 +944,8 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
         if (System.currentTimeMillis() < msgTimer) {
             int boxHeight = (int)(60 * scale);
-            g2.setColor(new Color(0, 0, 0, 180));
-            g2.fillRect(0, realH / 2 - boxHeight/2, realW, boxHeight);
-
-            g2.setColor(Color.CYAN);
-            g2.setFont(new Font("Arial", Font.BOLD, (int)(30 * scale)));
+            g2.setColor(new Color(0, 0, 0, 180)); g2.fillRect(0, realH / 2 - boxHeight/2, realW, boxHeight);
+            g2.setColor(Color.CYAN); g2.setFont(new Font("Arial", Font.BOLD, (int)(30 * scale)));
             FontMetrics fmMsg = g2.getFontMetrics();
             int textX = (realW - fmMsg.stringWidth(discordMsg)) / 2;
             g2.drawString(discordMsg, textX, realH / 2 + fmMsg.getAscent()/4);
@@ -969,15 +954,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         int uiFontSize = (int)(18 * scale);
         g2.setFont(new Font("Arial", Font.BOLD, uiFontSize));
 
-        String waveText;
-        if (currentWave == 3) {
-            waveText = "⚠️ BOSS FIGHT! ⚠️";
-        } else if (currentWave > 3) {
-            waveText = "ENDLESS VLNA " + currentWave;
-        } else {
-            waveText = "VLNA " + currentWave;
-        }
-
+        String waveText = currentWave == 3 ? "⚠️ BOSS FIGHT! ⚠️" : (currentWave > 3 ? "ENDLESS VLNA " + currentWave : "VLNA " + currentWave);
         FontMetrics fmUI = g2.getFontMetrics();
         g2.setColor(currentWave >= 3 ? Color.MAGENTA : Color.ORANGE);
         g2.drawString(waveText, (realW - fmUI.stringWidth(waveText)) / 2, (int)(30 * scale));
@@ -1001,21 +978,15 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             int yOffset = (int)(30 * scale);
 
             if (swapCd > 0) {
-                g2.setColor(Color.YELLOW);
-                g2.drawString("Výměna zbraně: " + (Math.round(swapCd / 100.0) / 10.0) + "s", 15, yOffset);
+                g2.setColor(Color.YELLOW); g2.drawString("Výměna: " + (Math.round(swapCd / 100.0) / 10.0) + "s", 15, yOffset);
             } else if (cd > 0) {
-                g2.setColor(Color.RED);
-                g2.drawString("Zbraň čeká: " + (Math.round(cd / 100.0) / 10.0) + "s", 15, yOffset);
+                g2.setColor(Color.RED); g2.drawString("Zbraň čeká: " + (Math.round(cd / 100.0) / 10.0) + "s", 15, yOffset);
             } else {
-                g2.setColor(Color.GREEN);
-                g2.drawString("PŘIPRAVENO", 15, yOffset);
+                g2.setColor(Color.GREEN); g2.drawString("PŘIPRAVENO", 15, yOffset);
             }
 
-            g2.setColor(new Color(0, 0, 0, 180));
-            g2.fillRoundRect(10, realH - 80, realW - 20, 75, 15, 15);
-
-            g2.setColor(Color.GRAY);
-            g2.drawRoundRect(10, realH - 80, realW - 20, 75, 15, 15);
+            g2.setColor(new Color(0, 0, 0, 180)); g2.fillRoundRect(10, realH - 80, realW - 20, 75, 15, 15);
+            g2.setColor(Color.GRAY); g2.drawRoundRect(10, realH - 80, realW - 20, 75, 15, 15);
 
             g2.setFont(new Font("Arial", Font.ITALIC, 14));
             g2.setColor(Color.LIGHT_GRAY);
@@ -1023,8 +994,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
             g2.setFont(new Font("Arial", Font.BOLD, 16));
             FontMetrics fmSkills = g2.getFontMetrics();
-            int bottomY = realH - 25;
-            int sectionWidth = realW / 4;
+            int bottomY = realH - 25; int sectionWidth = realW / 4;
 
             g2.setColor(player.activeWeapon == 1 ? Color.YELLOW : Color.GRAY);
             g2.drawString("[1] Oheň", (sectionWidth * 0) + (sectionWidth - fmSkills.stringWidth("[1] Oheň"))/2, bottomY);
@@ -1033,69 +1003,39 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                 g2.setColor(player.activeWeapon == 2 ? Color.CYAN : Color.GRAY);
                 g2.drawString("[2] Mráz", (sectionWidth * 1) + (sectionWidth - fmSkills.stringWidth("[2] Mráz"))/2, bottomY);
             }
-
             if (player.level >= 3) {
                 g2.setColor(player.activeWeapon == 3 ? Color.GREEN : Color.GRAY);
                 g2.drawString("[3] Štít", (sectionWidth * 2) + (sectionWidth - fmSkills.stringWidth("[3] Štít"))/2, bottomY);
             }
-
             if (inventoryManager.equippedComboId != 0) {
                 String comboStr = "[4] Kombo";
                 g2.setColor(player.activeWeapon == 4 ? new Color(255, 100, 0) : Color.GRAY);
                 g2.drawString(comboStr, (sectionWidth * 3) + (sectionWidth - fmSkills.stringWidth(comboStr))/2, bottomY);
             }
         }
-
-        if (System.currentTimeMillis() < swapTextTimer && player != null) {
-            g2.setFont(new Font("Arial", Font.BOLD, 16));
-            g2.setColor(new Color(255, 255, 0, 200));
-            g2.drawString(activeWeaponInfo, (int)player.x - 20, (int)player.y - 20);
-        }
     }
 
     @Override
     public void mousePressed(MouseEvent e) {
         if (SwingUtilities.isLeftMouseButton(e)) {
-            isMousePressed = true;
-            mouseTargetX = e.getX();
-            mouseTargetY = e.getY();
+            if (gameState == State.INVENTORY) {
+                boolean swapped = inventoryManager.tryEquipItemAt(e.getX(), e.getY(), WIDTH, HEIGHT);
+                if(swapped) updateWeaponInfo();
+            } else {
+                isMousePressed = true; mouseTargetX = e.getX(); mouseTargetY = e.getY();
+            }
         }
     }
-
-    @Override
-    public void mouseReleased(MouseEvent e) {
-        if (SwingUtilities.isLeftMouseButton(e)) {
-            isMousePressed = false;
-        }
-    }
-
-    @Override
-    public void mouseDragged(MouseEvent e) {
-        mouseTargetX = e.getX();
-        mouseTargetY = e.getY();
-    }
-
-    @Override
-    public void mouseMoved(MouseEvent e) {
-        mouseTargetX = e.getX();
-        mouseTargetY = e.getY();
-    }
-
-    @Override public void mouseClicked(MouseEvent e) {}
-    @Override public void mouseEntered(MouseEvent e) {}
-
-    @Override
-    public void mouseExited(MouseEvent e) {
-        isMousePressed = false;
-    }
+    @Override public void mouseReleased(MouseEvent e) { if (SwingUtilities.isLeftMouseButton(e)) isMousePressed = false; }
+    @Override public void mouseDragged(MouseEvent e) { mouseTargetX = e.getX(); mouseTargetY = e.getY(); }
+    @Override public void mouseMoved(MouseEvent e) { mouseTargetX = e.getX(); mouseTargetY = e.getY(); }
+    @Override public void mouseClicked(MouseEvent e) {} @Override public void mouseEntered(MouseEvent e) {} @Override public void mouseExited(MouseEvent e) { isMousePressed = false; }
 
     @Override
     public void keyPressed(KeyEvent e) {
         int key = e.getKeyCode();
 
-        if (gameState == State.LOADING) {
-            return;
-        }
+        if (gameState == State.LOADING) return;
 
         if (gameState == State.MENU) {
             if (key == KeyEvent.VK_1) resetGame(1);
@@ -1106,90 +1046,45 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         }
 
         if (gameState == State.SETTINGS) {
-            if (key == KeyEvent.VK_ESCAPE) {
-                gameState = State.MENU;
-            } else if (settingsScreen != null) {
-                settingsScreen.setCurrentWave(currentWave);
-                settingsScreen.update(key);
-            }
+            if (key == KeyEvent.VK_ESCAPE) gameState = State.MENU;
+            else if (settingsScreen != null) { settingsScreen.setCurrentWave(currentWave); settingsScreen.update(key); }
             return;
         }
 
         if (gameState == State.CUTSCENE) {
-            if (key == KeyEvent.VK_SPACE) {
-                cutsceneManager.next();
-            }
+            if (key == KeyEvent.VK_SPACE) cutsceneManager.next();
             return;
         }
 
         if (gameState == State.INVENTORY) {
-            if (key == KeyEvent.VK_E) {
-                inventoryManager.cycleEquippedCombo();
-                updateWeaponInfo();
-            }
-
-            if (key == KeyEvent.VK_C && inventoryManager.canCraftAnything()) {
-                startMinigame();
-            }
-
-            if (key == KeyEvent.VK_TAB || key == KeyEvent.VK_ESCAPE) {
-                gameState = State.PLAYING;
-            }
+            if (key == KeyEvent.VK_E) { inventoryManager.cycleEquippedCombo(); updateWeaponInfo(); }
+            if (key == KeyEvent.VK_C && inventoryManager.canCraftAnything()) startMinigame();
+            if (key == KeyEvent.VK_TAB || key == KeyEvent.VK_ESCAPE) gameState = State.PLAYING;
             return;
         }
 
         if (gameState == State.MINIGAME) {
             if (key == KeyEvent.VK_SPACE) {
                 if (mgCursorX >= mgTargetX && mgCursorX <= mgTargetX + mgTargetW) {
-                    mgSuccessHits++;
-                    mgMessage = "Pěkná rána!";
-                    mgSpeed += 2.0;
-                    mgTargetW -= 20;
-                    mgTargetX = (int) (Math.random() * (600 - mgTargetW));
-
-                    if (mgSuccessHits >= 3) {
-                        triggerShake(15, 10);
-                        inventoryManager.processCraftingResult(true, player);
-                        gameState = State.INVENTORY;
-                    }
+                    mgSuccessHits++; mgMessage = "Pěkná rána!"; mgSpeed += 2.0; mgTargetW -= 20; mgTargetX = (int) (Math.random() * (600 - mgTargetW));
+                    if (mgSuccessHits >= 3) { triggerShake(15, 10); inventoryManager.processCraftingResult(true, player); gameState = State.INVENTORY; }
                 } else {
-                    mgMessage = "Minul jsi! Suroviny jsou zničeny.";
-                    mgSuccessHits = 0;
-                    inventoryManager.processCraftingResult(false, player);
-                    gameState = State.INVENTORY;
+                    mgMessage = "Minul jsi! Suroviny jsou zničeny."; mgSuccessHits = 0; inventoryManager.processCraftingResult(false, player); gameState = State.INVENTORY;
                 }
             }
             return;
         }
 
         if (gameState == State.VICTORY) {
-            if (key == KeyEvent.VK_1) {
-                proceedToNextWave();
-            }
-            if (key == KeyEvent.VK_2) {
-                int nextWave = currentWave + 1;
-                resetGame(nextWave);
-            }
-            if (key == KeyEvent.VK_3) {
-                gameState = State.MENU;
-            }
+            if (key == KeyEvent.VK_1) proceedToNextWave();
+            if (key == KeyEvent.VK_2) { int nextWave = currentWave + 1; resetGame(nextWave); }
+            if (key == KeyEvent.VK_3) gameState = State.MENU;
             return;
         }
 
         if (gameState == State.PLAYING) {
-            if (key == KeyEvent.VK_TAB) {
-                gameState = State.INVENTORY;
-                isMousePressed = false;
-                return;
-            }
-
-            if (isGameOver && key == KeyEvent.VK_SPACE) {
-                gameState = State.MENU;
-                audioManager.playMenuMusic();
-                DiscordRPCManager.stop();
-                DiscordRPCManager.start();
-                return;
-            }
+            if (key == KeyEvent.VK_TAB) { gameState = State.INVENTORY; isMousePressed = false; return; }
+            if (isGameOver && key == KeyEvent.VK_SPACE) { gameState = State.MENU; audioManager.playMenuMusic(); DiscordRPCManager.stop(); DiscordRPCManager.start(); return; }
 
             if (key == KeyEvent.VK_T) showTutorial = false;
 
@@ -1198,28 +1093,17 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             if (key == KeyEvent.VK_A || key == KeyEvent.VK_LEFT) left = true;
             if (key == KeyEvent.VK_D || key == KeyEvent.VK_RIGHT) right = true;
 
+            // --- SPOUŠTĚNÍ DASH (Úskoku) POMOCÍ SHIFT ---
+            if (key == KeyEvent.VK_SHIFT && player != null) {
+                player.performDash(up, down, left, right);
+            }
+
             boolean swapped = false;
-
-            if (key == KeyEvent.VK_1 && player != null) {
-                player.swapWeapon(1, player.level);
-                swapped = true;
-            }
-            if (key == KeyEvent.VK_2 && player != null && player.level >= 2) {
-                player.swapWeapon(2, player.level);
-                swapped = true;
-            }
-            if (key == KeyEvent.VK_3 && player != null && player.level >= 3) {
-                player.swapWeapon(3, player.level);
-                swapped = true;
-            }
-            if (key == KeyEvent.VK_4 && player != null && inventoryManager.equippedComboId != 0) {
-                player.swapWeapon(4, player.level);
-                swapped = true;
-            }
-
-            if (swapped) {
-                updateWeaponInfo();
-            }
+            if (key == KeyEvent.VK_1 && player != null) { player.swapWeapon(1, player.level); swapped = true; }
+            if (key == KeyEvent.VK_2 && player != null && player.level >= 2) { player.swapWeapon(2, player.level); swapped = true; }
+            if (key == KeyEvent.VK_3 && player != null && player.level >= 3) { player.swapWeapon(3, player.level); swapped = true; }
+            if (key == KeyEvent.VK_4 && player != null && inventoryManager.equippedComboId != 0) { player.swapWeapon(4, player.level); swapped = true; }
+            if (swapped) updateWeaponInfo();
         }
     }
 
@@ -1232,10 +1116,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         if (key == KeyEvent.VK_D || key == KeyEvent.VK_RIGHT) right = false;
     }
 
-    @Override
-    public void keyTyped(KeyEvent e) {}
+    @Override public void keyTyped(KeyEvent e) {}
 
-    public int getCurrentWave() {
-        return currentWave;
-    }
+    public int getCurrentWave() { return currentWave; }
 }

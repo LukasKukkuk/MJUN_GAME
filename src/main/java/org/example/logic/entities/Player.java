@@ -1,241 +1,129 @@
 package org.example.logic.entities;
 
 import java.awt.*;
-import java.util.List;
 
 public class Player {
     public double x, y;
-    public final int size = 30;
-    public final double speed = 4.0;
-
+    public int size = 30;
+    public double speed = 4.0;
     public int maxHp = 100;
     public int hp = maxHp;
-    private long lastHitTime = 0;
 
     public int level = 1;
-    public int activeWeapon = 1;
-
-    // --- NOVÉ: Proměnné pro upgrady ---
     public int bonusDamage = 0;
     public double bonusSpeed = 0.0;
 
-    // OBRANNÉ SCHOPNOSTI
+    public int activeWeapon = 1;
+
+    private long lastAbilityTime = 0;
+    private long lastWeaponSwapTime = 0;
+
     public boolean isShieldActive = false;
     private long shieldEndTime = 0;
 
-    // Ohnivá aura
     public boolean isFireAuraActive = false;
     private long fireAuraEndTime = 0;
-    public double auraAngle = 0;
-    public final int AURA_RADIUS = 50;
+    public final int AURA_RADIUS = 80;
 
-    private long[] abilityCooldowns = {0, 0, 5000, 10000, 8000};
-    private long[] lastAbilityUseTime = {0, 0, 0, 0, 0};
+    // --- DASH MECHANIKA ---
+    public boolean isDashing = false;
+    private long dashEndTime = 0;
+    public long lastDashTime = 0;
+    public final long DASH_COOLDOWN = 1500; // Úskok každé 1.5 vteřiny
 
-    private long lastSwapTime = 0;
-    private long currentSwapCooldown = 2500;
-    private final long DEFAULT_SWAP_COOLDOWN = 2500;
-
-    private Image[] frames;
-    private int currentFrameIndex = 0;
-    private int frameCounter = 0;
-    private int animationSpeed = 10;
+    private Image[] walkAnim;
+    private int animFrame = 0;
+    private long lastAnimTime = 0;
 
     public Player(double x, double y) {
-        this.x = x;
-        this.y = y;
+        this.x = x; this.y = y;
     }
 
-    // --- NOVÉ: Metody pro upgrady ---
-    public void upgradeHp() {
-        this.maxHp += 20;
-        this.hp += 20;
-    }
+    public void setAnimations(Image[] anims) { this.walkAnim = anims; }
 
-    public void upgradeDamage() {
-        this.bonusDamage += 10;
-    }
-
-    public void upgradeSpeed() {
-        this.bonusSpeed += 0.5;
-    }
-    // ---------------------------------
-
-    public void setAnimations(Image[] frames) {
-        this.frames = frames;
-    }
-
-    public void updateAnimation(boolean isMoving) {
-        if (frames == null || frames.length == 0 || frames[0] == null) return;
-        if (isMoving) {
-            frameCounter++;
-            if (frameCounter >= animationSpeed) {
-                currentFrameIndex = (currentFrameIndex + 1) % frames.length;
-                frameCounter = 0;
-            }
-        } else {
-            currentFrameIndex = 0;
-            frameCounter = 0;
-        }
-    }
-
-    public void update(boolean up, boolean down, boolean left, boolean right, int w, int h, boolean inverted) {
-        double moveX = 0;
-        double moveY = 0;
-
+    public void update(boolean up, boolean down, boolean left, boolean right, int width, int height, boolean inverted) {
         long currentTime = System.currentTimeMillis();
-        if (currentTime >= shieldEndTime) isShieldActive = false;
-        if (currentTime >= fireAuraEndTime) isFireAuraActive = false;
 
-        // Rychlost ovlivněná upgrady a aurou
-        double currentSpeed = this.speed + this.bonusSpeed;
-        if (isFireAuraActive) {
-            currentSpeed *= 0.5;
-            auraAngle += 0.1;
-        }
+        // Konec štítu a aury
+        if (isShieldActive && currentTime > shieldEndTime) isShieldActive = false;
+        if (isFireAuraActive && currentTime > fireAuraEndTime) isFireAuraActive = false;
 
-        boolean actualUp = inverted ? down : up;
-        boolean actualDown = inverted ? up : down;
-        boolean actualLeft = inverted ? right : left;
-        boolean actualRight = inverted ? left : right;
+        // Konec dashe
+        if (isDashing && currentTime > dashEndTime) isDashing = false;
 
-        if (actualUp) moveY -= currentSpeed;
-        if (actualDown) moveY += currentSpeed;
-        if (actualLeft) moveX -= currentSpeed;
-        if (actualRight) moveX += currentSpeed;
+        // Během dashe je rychlost 3x větší!
+        double currentSpeed = (speed + bonusSpeed) * (isDashing ? 3.0 : 1.0);
 
-        if (moveX != 0 && moveY != 0) {
-            double length = Math.hypot(moveX, moveY);
-            moveX = (moveX / length) * currentSpeed;
-            moveY = (moveY / length) * currentSpeed;
-        }
+        boolean moving = false;
+        if (up) { y -= inverted ? -currentSpeed : currentSpeed; moving = true; }
+        if (down) { y += inverted ? -currentSpeed : currentSpeed; moving = true; }
+        if (left) { x -= inverted ? -currentSpeed : currentSpeed; moving = true; }
+        if (right) { x += inverted ? -currentSpeed : currentSpeed; moving = true; }
 
-        x += moveX;
-        y += moveY;
+        if (x < 0) x = 0; if (y < 0) y = 0;
+        if (x > width - size) x = width - size;
+        if (y > height - size) y = height - size;
 
-        if (x < 0) x = 0;
-        if (y < 0) y = 0;
-        if (x + size > w) x = w - size;
-        if (y + size > h) y = h - size;
-    }
-
-    public void swapWeapon(int weaponIndex, int currentWave) {
-        if (weaponIndex >= abilityCooldowns.length) return;
-        if (weaponIndex == 2 && currentWave < 2) return;
-        if (weaponIndex == 3 && currentWave < 3) return;
-        if (weaponIndex == 4 && currentWave < 4) return;
-
-        if (System.currentTimeMillis() - lastSwapTime >= currentSwapCooldown) {
-            activeWeapon = weaponIndex;
-            lastSwapTime = System.currentTimeMillis();
-            currentSwapCooldown = DEFAULT_SWAP_COOLDOWN;
+        if (moving && walkAnim != null && currentTime - lastAnimTime > 200) {
+            animFrame = (animFrame + 1) % walkAnim.length;
+            lastAnimTime = currentTime;
+        } else if (!moving) {
+            animFrame = 0;
         }
     }
 
+    public void performDash(boolean up, boolean down, boolean left, boolean right) {
+        long currentTime = System.currentTimeMillis();
+        if (currentTime - lastDashTime > DASH_COOLDOWN && (up || down || left || right)) {
+            isDashing = true;
+            dashEndTime = currentTime + 200; // Dash trvá 0.2 vteřiny (i-frames)
+            lastDashTime = currentTime;
+        }
+    }
+
+    // Ignorujeme damage během Dashe (i-frames)
     public void takeDamage(int amount) {
-        if (System.currentTimeMillis() - lastHitTime > 1000 && !isShieldActive) {
-            hp -= amount;
-            lastHitTime = System.currentTimeMillis();
-            if (hp < 0) hp = 0;
+        if (!isDashing && !isShieldActive) {
+            this.hp -= amount;
         }
-    }
-
-    public boolean canUseAbility() {
-        return System.currentTimeMillis() - lastAbilityUseTime[activeWeapon] >= abilityCooldowns[activeWeapon];
-    }
-
-    public void useAbility() {
-        lastAbilityUseTime[activeWeapon] = System.currentTimeMillis();
-    }
-
-    public void useAbility(long customCooldownMillis) {
-        abilityCooldowns[activeWeapon] = customCooldownMillis;
-        lastAbilityUseTime[activeWeapon] = System.currentTimeMillis();
-    }
-
-    public void setSwapCooldown(long penaltyMillis) {
-        this.currentSwapCooldown = penaltyMillis;
-        this.lastSwapTime = System.currentTimeMillis();
-    }
-
-    public long getRemainingCooldown() {
-        long elapsed = System.currentTimeMillis() - lastAbilityUseTime[activeWeapon];
-        long remaining = abilityCooldowns[activeWeapon] - elapsed;
-        return remaining > 0 ? remaining : 0;
-    }
-
-    public long getSwapCooldown() {
-        long elapsed = System.currentTimeMillis() - lastSwapTime;
-        long remaining = currentSwapCooldown - elapsed;
-        return remaining > 0 ? remaining : 0;
-    }
-
-    public void activateShield(long durationMillis, List<Enemy> enemies) {
-        isShieldActive = true;
-        shieldEndTime = System.currentTimeMillis() + durationMillis;
-        useAbility();
-    }
-
-    public void activateFireAura(long durationMillis) {
-        isFireAuraActive = true;
-        fireAuraEndTime = System.currentTimeMillis() + durationMillis;
-        useAbility(8000);
-        setSwapCooldown(5000);
     }
 
     public void draw(Graphics2D g2) {
-        boolean isBlinking = System.currentTimeMillis() - lastHitTime < 1000 && (System.currentTimeMillis() / 100) % 2 == 0;
+        if (isFireAuraActive) {
+            g2.setColor(new Color(255, 100, 0, 100));
+            g2.fillOval((int) x + size/2 - AURA_RADIUS, (int) y + size/2 - AURA_RADIUS, AURA_RADIUS*2, AURA_RADIUS*2);
+            g2.setColor(Color.RED);
+            g2.drawOval((int) x + size/2 - AURA_RADIUS, (int) y + size/2 - AURA_RADIUS, AURA_RADIUS*2, AURA_RADIUS*2);
+        }
 
-        if (isBlinking) {
-            g2.setColor(Color.WHITE);
+        if (isShieldActive) {
+            g2.setColor(new Color(0, 255, 255, 150));
+            g2.fillOval((int) x - 10, (int) y - 10, size + 20, size + 20);
+        }
+
+        // Efekt "ducha" při Dashi
+        if (isDashing) {
+            g2.setColor(new Color(255, 255, 255, 100));
             g2.fillRect((int) x, (int) y, size, size);
-        } else if (frames != null && frames.length > 0 && frames[currentFrameIndex] != null) {
-            g2.drawImage(frames[currentFrameIndex], (int) x, (int) y, size, size, null);
+        }
+
+        if (walkAnim != null && walkAnim[animFrame] != null) {
+            g2.drawImage(walkAnim[animFrame], (int) x, (int) y, size, size, null);
         } else {
             g2.setColor(Color.BLUE);
             g2.fillRect((int) x, (int) y, size, size);
         }
 
-        if (isShieldActive) {
-            g2.setColor(new Color(173, 216, 230, 120));
-            int shieldRadius = size + 40;
-            g2.fillOval((int) x - 20, (int) y - 20, shieldRadius, shieldRadius);
-            g2.setColor(Color.CYAN);
-            g2.drawOval((int) x - 20, (int) y - 20, shieldRadius, shieldRadius);
-        }
-
-        if (isFireAuraActive) {
-            int centerX = (int) x + size / 2;
-            int centerY = (int) y + size / 2;
-
-            for (int i = 0; i < 3; i++) {
-                double angleOffset = auraAngle + (i * (2 * Math.PI / 3));
-                int ballX = centerX + (int) (Math.cos(angleOffset) * AURA_RADIUS) - 8;
-                int ballY = centerY + (int) (Math.sin(angleOffset) * AURA_RADIUS) - 8;
-
-                g2.setColor(new Color(255, 100, 0, 180));
-                g2.fillOval(ballX, ballY, 16, 16);
-                g2.setColor(Color.YELLOW);
-                g2.drawOval(ballX, ballY, 16, 16);
-            }
-            g2.setColor(new Color(255, 50, 0, 40));
-            g2.fillOval(centerX - AURA_RADIUS - 8, centerY - AURA_RADIUS - 8, (AURA_RADIUS+8)*2, (AURA_RADIUS+8)*2);
-        }
-
-        g2.setColor(Color.BLACK);
-        g2.drawRect((int) x, (int) y - 15, size, 6);
-        g2.setColor(Color.GREEN);
-        if (hp < (maxHp * 0.4)) g2.setColor(Color.RED);
-        int hpWidth = (int) ((hp / (double) maxHp) * size);
-        if (hpWidth < 0) hpWidth = 0;
-        g2.fillRect((int) x + 1, (int) y - 14, hpWidth - 1, 5);
-
-        g2.setColor(Color.YELLOW);
-        g2.setFont(new Font("Arial", Font.BOLD, 10));
-        g2.drawString("Lvl " + level, (int)x, (int)y - 20);
+        g2.setColor(Color.BLACK); g2.fillRect((int) x, (int) y - 10, size, 5);
+        g2.setColor(Color.GREEN); g2.fillRect((int) x, (int) y - 10, (int) ((hp / (double) maxHp) * size), 5);
     }
 
-    public Rectangle getHitbox() {
-        return new Rectangle((int) x, (int) y, size, size);
-    }
+    public Rectangle getHitbox() { return new Rectangle((int) x, (int) y, size, size); }
+    public boolean canUseAbility() { return System.currentTimeMillis() - lastAbilityTime > 0; }
+    public void useAbility(long cooldownMs) { this.lastAbilityTime = System.currentTimeMillis() + cooldownMs; }
+    public long getRemainingCooldown() { return Math.max(0, lastAbilityTime - System.currentTimeMillis()); }
+    public void swapWeapon(int weaponId, int currentLevel) { if (System.currentTimeMillis() - lastWeaponSwapTime > 500) { this.activeWeapon = weaponId; this.lastWeaponSwapTime = System.currentTimeMillis(); } }
+    public long getSwapCooldown() { return Math.max(0, (lastWeaponSwapTime + 500) - System.currentTimeMillis()); }
+    public void activateShield(long duration, java.util.concurrent.CopyOnWriteArrayList<Enemy> enemies) { this.isShieldActive = true; this.shieldEndTime = System.currentTimeMillis() + duration; useAbility(8000); }
+    public void activateFireAura(long duration) { this.isFireAuraActive = true; this.fireAuraEndTime = System.currentTimeMillis() + duration; useAbility(10000); }
 }
