@@ -15,7 +15,10 @@ public class AudioManager {
 
     public void preloadAudio() {
         System.out.println("Načítám hudbu do paměti...");
-        String[] tracks = {"/menu.mp3", "/level1.mp3", "/level2.mp3", "/level3boss.mp3", "/gameover.mp3"};
+        String[] tracks = {
+                "/menu.mp3", "/level1.mp3", "/level2.mp3", "/level3boss.mp3", "/gameover.mp3",
+                "/cutscenes/music/boss_intro.mp3", "/cutscenes/music/level1intro.mp3", "/cutscenes/music/level2intro.mp3"
+        };
 
         for (String path : tracks) {
             try {

@@ -37,6 +37,11 @@ public class WaveManager {
             spawnY = Math.random() < 0.5 ? -50 : height + 50;
         }
 
+        if (currentWave >= 2 && Math.random() < 0.15) {
+            enemies.add(Enemy.createKamikaze(spawnX, spawnY, currentWave));
+            return;
+        }
+
         Type typeToSpawn = determineEnemyType();
         enemies.add(new Enemy(spawnX, spawnY, typeToSpawn, currentWave));
     }

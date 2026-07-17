@@ -204,7 +204,30 @@ public class InventoryManager {
         }
     }
 
-    public void draw(Graphics2D g2, int screenW, int screenH) {
+    // Vrací true a nastaví equippedComboId, pokud hráč klikl na slot s komba-předmětem.
+    public boolean tryEquipItemAt(int mouseX, int mouseY, int screenW, int screenH) {
+        int slotSize = 60, padding = 15;
+        int startX = screenW / 2 - (slotSize * 5 + padding * 4) / 2;
+        int startY = 180;
+
+        for (int i = 0; i < items.size() && i < 20; i++) {
+            int col = i % 5, row = i / 5;
+            int x = startX + col * (slotSize + padding);
+            int y = startY + row * (slotSize + padding);
+
+            if (new Rectangle(x, y, slotSize, slotSize).contains(mouseX, mouseY)) {
+                Item item = items.get(i);
+                if (item.type == Item.Type.COMBO_ABILITY) {
+                    equippedComboId = item.unlocksWeaponId;
+                    return true;
+                }
+                return false;
+            }
+        }
+        return false;
+    }
+
+    public void draw(Graphics2D g2, int screenW, int screenH, int mouseX, int mouseY) {
         g2.setColor(new Color(0, 0, 0, 220)); g2.fillRect(0, 0, screenW, screenH);
 
         g2.setColor(Color.WHITE); g2.setFont(new Font("Arial", Font.BOLD, 40));
@@ -233,10 +256,12 @@ public class InventoryManager {
         for (int i = 0; i < 20; i++) {
             int x = startX + col * (slotSize + padding);
             int y = startY + row * (slotSize + padding);
+            boolean hovered = new Rectangle(x, y, slotSize, slotSize).contains(mouseX, mouseY);
 
             g2.setColor(new Color(50, 50, 50, 150));
             g2.fillRoundRect(x, y, slotSize, slotSize, 10, 10);
-            g2.setColor(Color.GRAY); g2.drawRoundRect(x, y, slotSize, slotSize, 10, 10);
+            g2.setColor(hovered ? Color.YELLOW : Color.GRAY);
+            g2.drawRoundRect(x, y, slotSize, slotSize, 10, 10);
 
             if (i < items.size()) {
                 Item item = items.get(i);

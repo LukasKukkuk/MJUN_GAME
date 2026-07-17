@@ -504,7 +504,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                 isMousePressed = false;
 
                 // NAČÍTÁNÍ PŘÍBĚHU PŘÍMO ZE SOUBORU Z RESOURCES
-                cutsceneManager.startCutsceneFromFile("/cutscene/text/text_example.txt", () -> {
+                cutsceneManager.startCutsceneFromFile("/cutscenes/texts/text_example.txt", () -> {
                     boss = new Boss(WIDTH);
                     enemies.clear();
                     gameState = State.PLAYING;
@@ -523,32 +523,37 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         souls.removeIf(Soul::isExpired);
         lootDrops.removeIf(LootDrop::isExpired);
 
+        List<LootDrop> collectedDrops = new ArrayList<>();
         for (LootDrop drop : lootDrops) {
             if (drop.getHitbox().intersects(player.getHitbox())) {
                 inventoryManager.addItem(drop.item);
                 inventoryManager.applyBonusesToPlayer(player);
-                lootDrops.remove(drop);
+                collectedDrops.add(drop);
             }
         }
+        if (!collectedDrops.isEmpty()) lootDrops.removeAll(collectedDrops);
 
+        List<Soul> collectedSouls = new ArrayList<>();
         for (Soul soul : souls) {
             if (soul.getHitbox().intersects(player.getHitbox())) {
                 player.hp = Math.min(player.maxHp, player.hp + 10);
-                souls.remove(soul);
+                collectedSouls.add(soul);
             }
         }
+        if (!collectedSouls.isEmpty()) souls.removeAll(collectedSouls);
 
+        List<Projectile> deadProjectiles = new ArrayList<>();
         for (Projectile p : projectiles) {
             p.update();
             if (p.x < 0 || p.x > WIDTH || p.y < 0 || p.y > HEIGHT) {
-                projectiles.remove(p);
+                deadProjectiles.add(p);
                 continue;
             }
 
             boolean hitWall = false;
             for (Wall wall : walls) {
                 if (p.getHitbox().intersects(wall.getHitbox())) {
-                    wall.hp -= 10; projectiles.remove(p); hitWall = true; break;
+                    wall.hp -= 10; deadProjectiles.add(p); hitWall = true; break;
                 }
             }
             if (hitWall) continue;
@@ -557,7 +562,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             boolean hitHazard = false;
             for (Hazard h : hazards) {
                 if (h.type == Hazard.Type.BARREL && p.getHitbox().intersects(h.getHitbox())) {
-                    h.hp -= 15; projectiles.remove(p); hitHazard = true;
+                    h.hp -= 15; deadProjectiles.add(p); hitHazard = true;
 
                     if (h.hp <= 0) {
                         triggerShake(10, 8);
@@ -580,7 +585,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             if (hitHazard) continue;
 
             if (boss != null && p.getHitbox().intersects(boss.getHitbox())) {
-                projectiles.remove(p);
+                deadProjectiles.add(p);
                 if (!boss.isBlocking) {
                     int baseDmg = (p.type == 5) ? 80 : (player.level >= 3 ? 50 : (player.level == 2 ? 40 : 25));
                     int dmg = baseDmg + player.bonusDamage;
@@ -637,40 +642,43 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                         if (player.level >= 3) enemy.startDotDamage(2000);
                         damageTexts.add(new DamageText(enemy.x, enemy.y, "MRAZ", Color.CYAN, false));
                     }
-                    projectiles.remove(p);
+                    deadProjectiles.add(p);
                     break;
                 }
             }
         }
+        if (!deadProjectiles.isEmpty()) projectiles.removeAll(deadProjectiles);
 
+        List<Projectile> deadEnemyProjectiles = new ArrayList<>();
         for (Projectile p : enemyProjectiles) {
             p.update();
             if (p.x < 0 || p.x > WIDTH || p.y < 0 || p.y > HEIGHT) {
-                enemyProjectiles.remove(p);
+                deadEnemyProjectiles.add(p);
                 continue;
             }
 
             boolean hitWall = false;
             for (Wall wall : walls) {
                 if (p.getHitbox().intersects(wall.getHitbox())) {
-                    wall.hp -= 5; enemyProjectiles.remove(p); hitWall = true; break;
+                    wall.hp -= 5; deadEnemyProjectiles.add(p); hitWall = true; break;
                 }
             }
             if (hitWall) continue;
 
             if (p.getHitbox().intersects(player.getHitbox()) && !player.isDashing) {
                 player.takeDamage(10);
-                enemyProjectiles.remove(p);
+                deadEnemyProjectiles.add(p);
                 damageTexts.add(new DamageText(player.x, player.y, "-10", Color.RED, true));
                 triggerShake(3, 3);
             }
             else if (player.isShieldActive || player.isFireAuraActive) {
                 double distToPlayer = Math.hypot(p.x - player.x, p.y - player.y);
                 if (distToPlayer < player.AURA_RADIUS + 20) {
-                    enemyProjectiles.remove(p);
+                    deadEnemyProjectiles.add(p);
                 }
             }
         }
+        if (!deadEnemyProjectiles.isEmpty()) enemyProjectiles.removeAll(deadEnemyProjectiles);
 
         if (player.isFireAuraActive) {
             if (System.currentTimeMillis() - lastAuraDamageTime > 500) {
@@ -698,6 +706,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             }
         }
 
+        List<Enemy> deadEnemies = new ArrayList<>();
         for (Enemy enemy : enemies) {
             if (enemy.hp <= 0) {
                 for(int i = 0; i < 10; i++) particles.add(new Particle(enemy.x + 15, enemy.y + 15, new Color(150, 0, 0)));
@@ -717,7 +726,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                     }
                 }
 
-                enemies.remove(enemy);
+                deadEnemies.add(enemy);
                 continue;
             }
 
@@ -756,6 +765,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                 }
             }
         }
+        if (!deadEnemies.isEmpty()) enemies.removeAll(deadEnemies);
 
         long currentTime = System.currentTimeMillis();
         if (currentTime - lastRpcUpdate >= 2000) {
