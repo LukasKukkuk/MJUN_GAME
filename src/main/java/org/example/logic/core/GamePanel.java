@@ -364,7 +364,6 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     private void resetGame(int startWave) {
         currentWave = startWave;
         player = new Player(WIDTH / 2.0, HEIGHT / 2.0);
-        player.level = 1;
         player.setAnimations(playerWalkAnim);
 
         // Trvalá meta-progrese - permanentní bonusy odemčené za dosažené vlny napříč runy
@@ -389,7 +388,9 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         if (coopEnabled) {
             player2 = new Player(WIDTH / 2.0 + 50, HEIGHT / 2.0);
             player2.setAnimations(playerWalkAnim);
-            player2.level = player.level;
+            player2.weapon2Unlocked = player.weapon2Unlocked;
+            player2.weapon3Unlocked = player.weapon3Unlocked;
+            player2.weapon4Unlocked = player.weapon4Unlocked;
             player2.maxHp = player.maxHp;
             player2.hp = player2.maxHp;
             player2.bonusDamage = player.bonusDamage;
@@ -560,10 +561,6 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         ConfigManager.save(currentWave);
         if (currentWave >= 10) tryUnlockAchievement("wave_10");
         audioManager.playMusicForWave(Math.min(currentWave, 3));
-
-        if (player.activeWeapon == 2 && player.level < 2) player.activeWeapon = 1;
-        if (player.activeWeapon == 3 && player.level < 3) player.activeWeapon = 1;
-        if (player.activeWeapon == 4 && player.level < 4) player.activeWeapon = 1;
 
         generateHazards();
         updateWeaponInfo();
@@ -844,7 +841,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             if (boss != null && p.getHitbox().intersects(boss.getHitbox())) {
                 deadProjectiles.add(p);
                 if (!boss.isBlocking) {
-                    int baseDmg = (p.type == 5) ? 80 : (player.level >= 3 ? 50 : (player.level == 2 ? 40 : 25));
+                    int baseDmg = (p.type == 5) ? 80 : 25;
                     int dmg = baseDmg + player.bonusDamage;
 
                     boss.hp -= dmg;
@@ -860,10 +857,10 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             for (Enemy enemy : enemies) {
                 if (p.getHitbox().intersects(enemy.getHitbox())) {
                     if (p.type == 1 || p.type == 5) {
-                        int baseDmg = (p.type == 5) ? 80 : (player.level >= 3 ? 50 : (player.level == 2 ? 40 : 25));
+                        int baseDmg = (p.type == 5) ? 80 : 25;
                         int dmg = baseDmg + player.bonusDamage;
 
-                        if (player.level >= 3 && p.type == 1) {
+                        if (player.weapon3Unlocked && p.type == 1) {
                             java.util.ArrayList<Enemy> nearby = new java.util.ArrayList<>();
                             for (Enemy e : enemies) {
                                 if (Math.hypot(e.x - enemy.x, e.y - enemy.y) <= 100) nearby.add(e);
@@ -896,7 +893,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                     }
                     else if (p.type == 2) {
                         enemy.freeze(2500);
-                        if (player.level >= 3) enemy.startDotDamage(2000);
+                        if (player.weapon3Unlocked) enemy.startDotDamage(2000);
                         damageTexts.add(new DamageText(enemy.x, enemy.y, "MRAZ", Color.CYAN, false));
                     }
                     deadProjectiles.add(p);
@@ -1035,13 +1032,12 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     private void updateWeaponInfo() {
         if(player == null) return;
         swapTextTimer = System.currentTimeMillis() + 2000;
-        int lvl = player.level;
         int bDmg = player.bonusDamage;
 
         if (player.activeWeapon == 1) {
-            activeWeaponInfo = "Ohnivá střela: " + ((lvl >= 3 ? 50 : (lvl == 2 ? 40 : 25)) + bDmg) + " DMG" + (lvl >= 3 ? " (Plošný výbuch)" : "");
+            activeWeaponInfo = "Ohnivá střela: " + (25 + bDmg) + " DMG" + (player.weapon3Unlocked ? " (Plošný výbuch)" : "");
         } else if (player.activeWeapon == 2) {
-            activeWeaponInfo = "Mráz: Zmrazí cíl" + (lvl >= 3 ? " + Jed (" + bDmg + " DMG)" : "");
+            activeWeaponInfo = "Mráz: Zmrazí cíl" + (player.weapon3Unlocked ? " + Jed (" + bDmg + " DMG)" : "");
         } else if (player.activeWeapon == 3) {
             activeWeaponInfo = "Větrný Štít: Odstrkuje nepřátele (3s)";
         } else if (player.activeWeapon == 4) {
@@ -1305,14 +1301,11 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                 else weaponName = "Žádné Kombo";
             }
 
-            long cd = player.getRemainingCooldown();
             long swapCd = player.getSwapCooldown();
             int yOffset = (int)(30 * scale);
 
             if (swapCd > 0) {
                 g2.setColor(Color.YELLOW); g2.drawString("Výměna: " + (Math.round(swapCd / 100.0) / 10.0) + "s", 15, yOffset);
-            } else if (cd > 0) {
-                g2.setColor(Color.RED); g2.drawString("Zbraň čeká: " + (Math.round(cd / 100.0) / 10.0) + "s", 15, yOffset);
             }
 
             g2.setColor(new Color(0, 0, 0, 180)); g2.fillRoundRect(10, realH - 80, realW - 20, 75, 15, 15);
@@ -1328,12 +1321,12 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             g2.setColor(player.activeWeapon == 1 ? Color.YELLOW : Color.GRAY);
             g2.drawString("[1] Oheň", (sectionWidth * 0) + (sectionWidth - fmSkills.stringWidth("[1] Oheň"))/2, bottomY);
 
-            if (player.level >= 2) {
+            if (player.weapon2Unlocked) {
                 g2.setColor(player.activeWeapon == 2 ? Color.CYAN : Color.GRAY);
                 g2.drawString("[2] Mráz", (sectionWidth * 1) + (sectionWidth - fmSkills.stringWidth("[2] Mráz"))/2, bottomY);
             }
 
-            if (player.level >= 3) {
+            if (player.weapon3Unlocked) {
                 g2.setColor(player.activeWeapon == 3 ? Color.GREEN : Color.GRAY);
                 g2.drawString("[3] Štít", (sectionWidth * 2) + (sectionWidth - fmSkills.stringWidth("[3] Štít"))/2, bottomY);
             }
@@ -1469,10 +1462,10 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             }
 
             boolean swapped = false;
-            if (key == KeyEvent.VK_1 && player != null) { player.swapWeapon(1, player.level); swapped = true; }
-            if (key == KeyEvent.VK_2 && player != null && player.level >= 2) { player.swapWeapon(2, player.level); swapped = true; }
-            if (key == KeyEvent.VK_3 && player != null && player.level >= 3) { player.swapWeapon(3, player.level); swapped = true; }
-            if (key == KeyEvent.VK_4 && player != null && inventoryManager.equippedComboId != 0) { player.swapWeapon(4, player.level); swapped = true; }
+            if (key == KeyEvent.VK_1 && player != null) swapped = player.swapWeapon(1);
+            if (key == KeyEvent.VK_2 && player != null) swapped = player.swapWeapon(2);
+            if (key == KeyEvent.VK_3 && player != null) swapped = player.swapWeapon(3);
+            if (key == KeyEvent.VK_4 && player != null) swapped = player.swapWeapon(4);
             if (swapped) updateWeaponInfo();
         }
     }

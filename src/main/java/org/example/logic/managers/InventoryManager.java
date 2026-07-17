@@ -87,23 +87,22 @@ public class InventoryManager {
     public void applyBonusesToPlayer(Player player) {
         player.bonusDamage = 0; player.bonusSpeed = 0.0;
         int totalMaxHp = 100;
-        int highestWeaponUnlock = 1; // Základní zbraň
 
         for (Item item : items) {
             player.bonusDamage += item.bonusDamage;
             player.bonusSpeed += item.bonusSpeed;
             totalMaxHp += item.bonusMaxHp;
 
-            // Odemčení zbraní 2 a 3
-            if (item.type == Item.Type.WEAPON_UNLOCK && item.unlocksWeaponId > highestWeaponUnlock) {
-                highestWeaponUnlock = item.unlocksWeaponId;
+            // Trvalé odemknutí zbraně 2/3 - jakmile má hráč krystal jednou u sebe,
+            // nezáleží na tom, jestli ho pak spotřebuje na crafting komba.
+            if (item.type == Item.Type.WEAPON_UNLOCK) {
+                if (item.unlocksWeaponId == 2) player.weapon2Unlocked = true;
+                if (item.unlocksWeaponId == 3) player.weapon3Unlocked = true;
             }
         }
 
-        // Aktualizace levelu hráče na základě odemčených krystalů (aby mohl měnit na zbraň 2 a 3)
-        if (highestWeaponUnlock > player.level) player.level = highestWeaponUnlock;
-        // Pokud má nějaké kombo, odemkne se mu i 4. slot
-        if (equippedComboId != 0 && player.level < 4) player.level = 4;
+        // Jakmile hráč jednou vytvoří libovolné kombo, zbraň 4 zůstává odemčená natrvalo
+        if (equippedComboId != 0) player.weapon4Unlocked = true;
 
         if (totalMaxHp > player.maxHp) {
             int difference = totalMaxHp - player.maxHp;
@@ -149,10 +148,10 @@ public class InventoryManager {
     public void processCraftingResult(boolean success, Player player) {
         if (!success) return;
 
-        // 1. Zkratka pro úlomky zbraně (Zvyšují level hráče = odemykají zbraně 1-3)
+        // 1. Zkratka pro úlomky zbraně - přímý bonus poškození (žádné skryté levely)
         if (getShardCount() >= 3) {
             consumeShards(3);
-            player.level++;
+            player.upgradeDamage();
             applyBonusesToPlayer(player);
             return;
         }
