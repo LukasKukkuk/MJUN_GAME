@@ -12,7 +12,11 @@ public class Player {
     public int hp = maxHp;
     private long lastHitTime = 0;
 
-    public int level = 1;
+    // Trvalé odemknutí zbraní - jednou sebraný krystal/vytvořené kombo odemyká
+    // navždy, nezávisle na tom, jestli je krystal později spotřebován na crafting.
+    public boolean weapon2Unlocked = false; // Mráz (led. krystal)
+    public boolean weapon3Unlocked = false; // Větrný štít (větrný krystal)
+    public boolean weapon4Unlocked = false; // Kombo (jakýkoliv vytvořený)
     public int activeWeapon = 1;
 
     // --- NOVÉ: Proměnné pro upgrady ---
@@ -170,17 +174,19 @@ public class Player {
         lastDashTime = currentTime;
     }
 
-    public void swapWeapon(int weaponIndex, int currentWave) {
-        if (weaponIndex >= abilityCooldowns.length) return;
-        if (weaponIndex == 2 && currentWave < 2) return;
-        if (weaponIndex == 3 && currentWave < 3) return;
-        if (weaponIndex == 4 && currentWave < 4) return;
+    public boolean swapWeapon(int weaponIndex) {
+        if (weaponIndex >= abilityCooldowns.length) return false;
+        if (weaponIndex == 2 && !weapon2Unlocked) return false;
+        if (weaponIndex == 3 && !weapon3Unlocked) return false;
+        if (weaponIndex == 4 && !weapon4Unlocked) return false;
 
         if (System.currentTimeMillis() - lastSwapTime >= currentSwapCooldown) {
             activeWeapon = weaponIndex;
             lastSwapTime = System.currentTimeMillis();
             currentSwapCooldown = DEFAULT_SWAP_COOLDOWN;
+            return true;
         }
+        return false;
     }
 
     public void takeDamage(int amount) {
@@ -280,10 +286,6 @@ public class Player {
         int hpWidth = (int) ((hp / (double) maxHp) * size);
         if (hpWidth < 0) hpWidth = 0;
         g2.fillRect((int) x + 1, (int) y - 14, hpWidth - 1, 5);
-
-        g2.setColor(Color.YELLOW);
-        g2.setFont(new Font("Arial", Font.BOLD, 10));
-        g2.drawString("Lvl " + level, (int)x, (int)y - 20);
     }
 
     public Rectangle getHitbox() {

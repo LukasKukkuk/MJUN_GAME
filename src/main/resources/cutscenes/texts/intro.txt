@@ -1,0 +1,5 @@
+BGM;/cutscenes/music/level1intro.mp3
+TEXT;Vypravěč;Temnota se znovu probouzí a vlny nepřátel se blíží k poslednímu útočišti.;;
+TEXT;Vypravěč;Tahle výprava je ale jiná. Dnes bojuje MJUN.;;
+TEXT;MJUN;Tak jo. Pojďme na to.;;
+SHAKE;5

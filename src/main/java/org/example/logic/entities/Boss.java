@@ -6,13 +6,15 @@ import java.awt.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 public class Boss {
-    public double x, y;
-    public int width = 120, height = 120;
+    public enum Variant { SHADOW, FINAL }
 
-    // Sníženo z 20 000 - bez kombo zbraně (RNG-závislé) šlo o desítky minut
-    // boj proti damage sponge, který navíc lifesteal dělal skoro bezrizikovým.
-    public int maxHp = 12000;
-    public int hp = maxHp;
+    public double x, y;
+    public int width, height;
+    public final Variant variant;
+    public final String displayName;
+
+    public int maxHp;
+    public int hp;
 
     private long lastAttackTime = 0;
     private int attackPhase = 0; // 0 = 100%, 1 = 75%, 2 = 50%, 3 = 25%
@@ -25,6 +27,12 @@ public class Boss {
     public double laserX = 0;
     private int laserDirection = 1;
     private long laserEndTime = 0;
+
+    // --- CHARGE DASH (exkluzivní útok finálního bosse) ---
+    public boolean isChargingAttack = false;
+    private double chargeTargetX = 0;
+    private long chargeEndTime = 0;
+    private boolean chargeHasHit = false;
 
     // --- AOE (METEOR) MECHANIKA ---
     private class AoeZone {
@@ -41,6 +49,25 @@ public class Boss {
     private CopyOnWriteArrayList<AoeZone> aoeZones = new CopyOnWriteArrayList<>();
 
     public Boss(int screenWidth) {
+        this(screenWidth, Variant.SHADOW);
+    }
+
+    public Boss(int screenWidth, Variant variant) {
+        this.variant = variant;
+        if (variant == Variant.FINAL) {
+            this.width = 140;
+            this.height = 140;
+            // Sníženo z 20 000 - bez kombo zbraně (RNG-závislé) šlo o desítky minut
+            // boj proti damage sponge. Finální boss je ale těžší než ten první.
+            this.maxHp = 18000;
+            this.displayName = "Temný Stín: Probuzení";
+        } else {
+            this.width = 120;
+            this.height = 120;
+            this.maxHp = 12000;
+            this.displayName = "Temný Stín";
+        }
+        this.hp = maxHp;
         this.x = (screenWidth / 2.0) - (width / 2.0);
         this.y = 50; // Staticky nahoře uprostřed
     }
@@ -51,18 +78,19 @@ public class Boss {
         // 1. Zjištění fáze podle HP
         double hpPercent = (double) hp / maxHp;
 
-        // ZRYCHLENÉ ÚTOKY PRO VĚTŠÍ VÝZVU
-        long attackCooldown = 1500;
+        // ZRYCHLENÉ ÚTOKY PRO VĚTŠÍ VÝZVU (finální boss je o něco rychlejší)
+        long speedBonus = (variant == Variant.FINAL) ? 200 : 0;
+        long attackCooldown = 1500 - speedBonus;
 
         if (hpPercent <= 0.75 && hpPercent > 0.5) {
             attackPhase = 1;
-            attackCooldown = 1200; // Rychlejší + Nova Attack
+            attackCooldown = 1200 - speedBonus; // Rychlejší + Nova Attack
         } else if (hpPercent <= 0.5 && hpPercent > 0.25) {
             attackPhase = 2;
-            attackCooldown = 900;  // Velmi rychlé + Štít + Širší spread
+            attackCooldown = 900 - speedBonus;  // Velmi rychlé + Štít + Širší spread
         } else if (hpPercent <= 0.25) {
             attackPhase = 3;
-            attackCooldown = 600;  // Brutální Bullet Hell rychlost + AOE
+            attackCooldown = 600 - speedBonus;  // Brutální Bullet Hell rychlost + AOE
         }
 
         // 2. Konec štítu / Laseru
@@ -75,6 +103,22 @@ public class Boss {
             // Kolize hráče s laserem
             if (player.x + player.size > laserX - 25 && player.x < laserX + 25) {
                 player.takeDamage(20); // Zvýšené poškození
+            }
+        }
+
+        // 2b. Charge dash (jen finální boss)
+        if (isChargingAttack) {
+            double dx = chargeTargetX - x;
+            double step = Math.signum(dx) * 18;
+            if (Math.abs(dx) <= Math.abs(step)) {
+                x = chargeTargetX;
+                isChargingAttack = false;
+            } else {
+                x += step;
+            }
+            if (!chargeHasHit && getHitbox().intersects(player.getHitbox())) {
+                player.takeDamage(35);
+                chargeHasHit = true;
             }
         }
 
@@ -91,12 +135,13 @@ public class Boss {
         }
 
         // 4. Výběr Útoků
-        if (currentTime - lastAttackTime > attackCooldown && !isLaserActive) {
+        if (currentTime - lastAttackTime > attackCooldown && !isLaserActive && !isChargingAttack) {
 
             int maxAttackTypes = 2;
             if (attackPhase >= 1) maxAttackTypes = 3;
             if (attackPhase >= 2) maxAttackTypes = 4;
             if (attackPhase >= 3) maxAttackTypes = 5;
+            if (variant == Variant.FINAL && attackPhase >= 1) maxAttackTypes = 6; // + charge dash
 
             int attackType = (int) (Math.random() * maxAttackTypes);
 
@@ -115,8 +160,9 @@ public class Boss {
                 laserEndTime = currentTime + 3000;
 
             } else if (attackType == 2) {
-                // BULLET HELL NOVA (Hustší kruh projektilů)
-                for(int angle = 0; angle < 360; angle += 20) { // Každých 20 stupňů = méně místa na úhyb
+                // BULLET HELL NOVA (Hustší kruh projektilů, finální boss má ještě hustší)
+                int step = (variant == Variant.FINAL) ? 15 : 20;
+                for(int angle = 0; angle < 360; angle += step) {
                     double rad = Math.toRadians(angle);
                     double targetX = x + width/2.0 + Math.cos(rad) * 100;
                     double targetY = y + height/2.0 + Math.sin(rad) * 100;
@@ -131,6 +177,13 @@ public class Boss {
             } else if (attackType == 4) {
                 // AOE ZÓNA (Vytvoří bombu přímo pod hráčem s velmi krátkou dobou na útěk)
                 aoeZones.add(new AoeZone(player.x + player.size/2.0, player.y + player.size/2.0, currentTime + 1200));
+
+            } else if (attackType == 5 && variant == Variant.FINAL) {
+                // CHARGE DASH: boss se rychle přesune přes celou obrazovku ve směru hráče
+                isChargingAttack = true;
+                chargeHasHit = false;
+                chargeTargetX = (player.x > x) ? Math.min(x + 500, 900) : Math.max(x - 500, -140);
+                chargeEndTime = currentTime + 900;
             }
 
             lastAttackTime = currentTime;
@@ -167,8 +220,13 @@ public class Boss {
             g2.fillOval((int)x - 20, (int)y - 20, width + 40, height + 40);
         }
 
-        // Tělo bosse
-        g2.setColor(new Color(150, 0, 0));
+        if (isChargingAttack) {
+            g2.setColor(new Color(255, 255, 255, 120));
+            g2.fillRect((int)x - 10, (int)y - 10, width + 20, height + 20);
+        }
+
+        // Tělo bosse - finální boss je odlišen barvou, aby byl na první pohled jiný souboj
+        g2.setColor(variant == Variant.FINAL ? new Color(80, 0, 120) : new Color(150, 0, 0));
         g2.fillRect((int) x, (int) y, width, height);
 
         // Laser
@@ -181,6 +239,11 @@ public class Boss {
             g2.setColor(new Color(255, 255, 255, 255));
             g2.fillRect((int)laserX - 5, (int)y + height, 10, screenHeight);
         }
+
+        // Jméno bosse
+        g2.setColor(Color.WHITE);
+        g2.setFont(new Font("Arial", Font.BOLD, 14));
+        g2.drawString(displayName, (int) x, (int) y - 25);
 
         // HP Bar Bosse
         g2.setColor(Color.BLACK);

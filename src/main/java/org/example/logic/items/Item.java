@@ -101,4 +101,11 @@ public class Item {
         item.unlocksWeaponId = 6; // ID comba 6
         return item;
     }
+
+    // --- ULTIMÁTNÍ KOMBO (všechny 3 krystaly najednou) ---
+    public static Item createComboMeteor() {
+        Item item = new Item("combo_meteor", "Meteor (Oheň+Vítr+Led)", Type.COMBO_ABILITY, 1, new Color(255, 215, 0));
+        item.unlocksWeaponId = 7; // ID comba 7
+        return item;
+    }
 }
