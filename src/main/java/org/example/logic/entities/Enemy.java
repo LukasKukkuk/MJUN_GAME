@@ -7,12 +7,15 @@ import java.awt.*;
 import java.util.List;
 
 public class Enemy {
+    public enum EnemyType { NORMAL, KAMIKAZE }
+
     public double x, y;
     public int size = 30;
     public double speed;
     public int maxHp;
     public int hp;
     public Type type;
+    public EnemyType enemyType = EnemyType.NORMAL;
 
     private long freezeEndTime = 0;
     private long dotEndTime = 0;
@@ -25,9 +28,14 @@ public class Enemy {
     private long shootCooldown;
 
     public Enemy(double x, double y, Type type, int currentWave) {
+        this(x, y, type, currentWave, EnemyType.NORMAL);
+    }
+
+    public Enemy(double x, double y, Type type, int currentWave, EnemyType enemyType) {
         this.x = x;
         this.y = y;
         this.type = type;
+        this.enemyType = enemyType;
 
         // Škálování podle vln (v Endless módu mají mnohem více životů)
         int waveBonusHp = (currentWave > 3) ? (currentWave - 3) * 20 : 0;
@@ -45,7 +53,17 @@ public class Enemy {
             this.shootCooldown = 1500; // Střílí každých 1.5s
         }
 
+        if (enemyType == EnemyType.KAMIKAZE) {
+            // Rychlý, křehký sebevražedný útočník - přebíjí statistiky podle typu výše
+            this.maxHp = 25 + (waveBonusHp / 2);
+            this.speed = 3.2 + (currentWave * 0.05);
+        }
+
         this.hp = this.maxHp;
+    }
+
+    public static Enemy createKamikaze(double x, double y, int currentWave) {
+        return new Enemy(x, y, Type.THIEVES, currentWave, EnemyType.KAMIKAZE);
     }
 
     public void freeze(long durationMillis) {
@@ -80,7 +98,13 @@ public class Enemy {
         double moveY = 0;
 
         // --- ELITE AI LOGIKA ---
-        if (type == Type.THIEVES || type == Type.BANDITS) {
+        if (enemyType == EnemyType.KAMIKAZE) {
+            // Kamikaze ignoruje flankování/kiting a jde přímo na hráče
+            if (distance > 0) {
+                moveX = dx / distance;
+                moveY = dy / distance;
+            }
+        } else if (type == Type.THIEVES || type == Type.BANDITS) {
             // FLANKOVÁNÍ: Nepřátelé nejdou přímo, ale snaží se hráče "obtékat"
             flankAngle += angleSpeed; // Mírně měníme úhel útoku
 
@@ -155,6 +179,8 @@ public class Enemy {
             } else {
                 g2.setColor(new Color(100, 200, 255));
             }
+        } else if (enemyType == EnemyType.KAMIKAZE) {
+            g2.setColor(Color.ORANGE);
         } else {
             // Barva podle typu
             if (type == Type.THIEVES) g2.setColor(Color.RED);

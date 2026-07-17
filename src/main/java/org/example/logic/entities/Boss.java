@@ -9,8 +9,9 @@ public class Boss {
     public double x, y;
     public int width = 120, height = 120;
 
-    // HP nastaveno na 20 000 (S komby a upgrady to půjde rychle dolů, ale štít minionů ho bude chránit)
-    public int maxHp = 20000;
+    // Sníženo z 20 000 - bez kombo zbraně (RNG-závislé) šlo o desítky minut
+    // boj proti damage sponge, který navíc lifesteal dělal skoro bezrizikovým.
+    public int maxHp = 12000;
     public int hp = maxHp;
 
     private long lastAttackTime = 0;
@@ -137,8 +138,10 @@ public class Boss {
     }
 
     public int getLifestealAmount() {
-        if (attackPhase == 3) return 5; // V nejtěžší fázi se boss healuje méně, aby se dal dorazit
-        return 15;
+        // Sníženo - lifesteal měl při agresivním útočení skoro rušit smysl
+        // uhýbání útokům, což je u bullet-hell bosse kontraproduktivní.
+        if (attackPhase == 3) return 2;
+        return 8;
     }
 
     public void draw(Graphics2D g2, int screenHeight) {

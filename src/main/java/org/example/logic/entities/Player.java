@@ -32,6 +32,15 @@ public class Player {
     private long[] abilityCooldowns = {0, 0, 5000, 10000, 8000};
     private long[] lastAbilityUseTime = {0, 0, 0, 0, 0};
 
+    // --- ÚSKOK (DASH) ---
+    public static final long DASH_COOLDOWN = 3000;
+    private static final long DASH_DURATION = 180;
+    private static final double DASH_SPEED = 13.0;
+    public boolean isDashing = false;
+    public long lastDashTime = -DASH_COOLDOWN;
+    private double dashDirX = 0, dashDirY = 0;
+    private double lastFacingDirX = 0, lastFacingDirY = 1; // Výchozí směr "dolů", než se hráč poprvé pohne
+
     private long lastSwapTime = 0;
     private long currentSwapCooldown = 2500;
     private final long DEFAULT_SWAP_COOLDOWN = 2500;
@@ -87,27 +96,44 @@ public class Player {
         if (currentTime >= shieldEndTime) isShieldActive = false;
         if (currentTime >= fireAuraEndTime) isFireAuraActive = false;
 
-        // Rychlost ovlivněná upgrady a aurou
-        double currentSpeed = this.speed + this.bonusSpeed;
-        if (isFireAuraActive) {
-            currentSpeed *= 0.5;
-            auraAngle += 0.1;
+        if (isDashing) {
+            if (currentTime - lastDashTime < DASH_DURATION) {
+                moveX = dashDirX * DASH_SPEED;
+                moveY = dashDirY * DASH_SPEED;
+            } else {
+                isDashing = false;
+            }
         }
 
-        boolean actualUp = inverted ? down : up;
-        boolean actualDown = inverted ? up : down;
-        boolean actualLeft = inverted ? right : left;
-        boolean actualRight = inverted ? left : right;
+        if (!isDashing) {
+            // Rychlost ovlivněná upgrady a aurou
+            double currentSpeed = this.speed + this.bonusSpeed;
+            if (isFireAuraActive) {
+                currentSpeed *= 0.5;
+                auraAngle += 0.1;
+            }
 
-        if (actualUp) moveY -= currentSpeed;
-        if (actualDown) moveY += currentSpeed;
-        if (actualLeft) moveX -= currentSpeed;
-        if (actualRight) moveX += currentSpeed;
+            boolean actualUp = inverted ? down : up;
+            boolean actualDown = inverted ? up : down;
+            boolean actualLeft = inverted ? right : left;
+            boolean actualRight = inverted ? left : right;
 
-        if (moveX != 0 && moveY != 0) {
-            double length = Math.hypot(moveX, moveY);
-            moveX = (moveX / length) * currentSpeed;
-            moveY = (moveY / length) * currentSpeed;
+            if (actualUp) moveY -= currentSpeed;
+            if (actualDown) moveY += currentSpeed;
+            if (actualLeft) moveX -= currentSpeed;
+            if (actualRight) moveX += currentSpeed;
+
+            if (moveX != 0 && moveY != 0) {
+                double length = Math.hypot(moveX, moveY);
+                moveX = (moveX / length) * currentSpeed;
+                moveY = (moveY / length) * currentSpeed;
+            }
+
+            if (moveX != 0 || moveY != 0) {
+                double length = Math.hypot(moveX, moveY);
+                lastFacingDirX = moveX / length;
+                lastFacingDirY = moveY / length;
+            }
         }
 
         x += moveX;
@@ -117,6 +143,31 @@ public class Player {
         if (y < 0) y = 0;
         if (x + size > w) x = w - size;
         if (y + size > h) y = h - size;
+    }
+
+    public void performDash(boolean up, boolean down, boolean left, boolean right) {
+        long currentTime = System.currentTimeMillis();
+        if (currentTime - lastDashTime < DASH_COOLDOWN) return;
+
+        double dx = 0, dy = 0;
+        if (up) dy -= 1;
+        if (down) dy += 1;
+        if (left) dx -= 1;
+        if (right) dx += 1;
+
+        if (dx == 0 && dy == 0) {
+            // Bez držené směrové klávesy uhneme ve směru posledního pohybu
+            dx = lastFacingDirX;
+            dy = lastFacingDirY;
+        }
+        if (dx == 0 && dy == 0) return;
+
+        double length = Math.hypot(dx, dy);
+        dashDirX = dx / length;
+        dashDirY = dy / length;
+
+        isDashing = true;
+        lastDashTime = currentTime;
     }
 
     public void swapWeapon(int weaponIndex, int currentWave) {

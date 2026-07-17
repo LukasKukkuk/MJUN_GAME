@@ -144,12 +144,15 @@ public class InventoryManager {
         return false;
     }
 
-    // Zpracuje výsledek minihry. Pokud success = true, vytvoří item. Pokud false, zničí suroviny!
+    // Zpracuje výsledek minihry. Suroviny se spotřebují POUZE při úspěchu -
+    // neúspěch v minihře stojí jen pokus, ne vzácné suroviny za desítky zabití.
     public void processCraftingResult(boolean success, Player player) {
+        if (!success) return;
+
         // 1. Zkratka pro úlomky zbraně (Zvyšují level hráče = odemykají zbraně 1-3)
         if (getShardCount() >= 3) {
             consumeShards(3);
-            if (success) player.level++;
+            player.level++;
             applyBonusesToPlayer(player);
             return;
         }
@@ -157,28 +160,22 @@ public class InventoryManager {
         // 2. Křížení elementů (Komba pro slot 4)
         if (hasItem("fire_crystal") && hasItem("wind_crystal")) {
             removeItem("fire_crystal"); removeItem("wind_crystal");
-            if (success) {
-                items.add(Item.createComboFireWind());
-                if (equippedComboId == 0) equippedComboId = 4;
-            }
+            items.add(Item.createComboFireWind());
+            if (equippedComboId == 0) equippedComboId = 4;
             applyBonusesToPlayer(player);
             return;
         }
         if (hasItem("fire_crystal") && hasItem("ice_crystal")) {
             removeItem("fire_crystal"); removeItem("ice_crystal");
-            if (success) {
-                items.add(Item.createComboIceFire());
-                if (equippedComboId == 0) equippedComboId = 5;
-            }
+            items.add(Item.createComboIceFire());
+            if (equippedComboId == 0) equippedComboId = 5;
             applyBonusesToPlayer(player);
             return;
         }
         if (hasItem("wind_crystal") && hasItem("ice_crystal")) {
             removeItem("wind_crystal"); removeItem("ice_crystal");
-            if (success) {
-                items.add(Item.createComboWindIce());
-                if (equippedComboId == 0) equippedComboId = 6;
-            }
+            items.add(Item.createComboWindIce());
+            if (equippedComboId == 0) equippedComboId = 6;
             applyBonusesToPlayer(player);
             return;
         }
@@ -195,16 +192,37 @@ public class InventoryManager {
 
             if (matches.size() >= 3) {
                 items.remove(matches.get(0)); items.remove(matches.get(1)); items.remove(matches.get(2));
-                if (success) {
-                    items.add(current.createUpgradedVersion());
-                }
+                items.add(current.createUpgradedVersion());
                 applyBonusesToPlayer(player);
                 return;
             }
         }
     }
 
-    public void draw(Graphics2D g2, int screenW, int screenH) {
+    // Vrací true a nastaví equippedComboId, pokud hráč klikl na slot s komba-předmětem.
+    public boolean tryEquipItemAt(int mouseX, int mouseY, int screenW, int screenH) {
+        int slotSize = 60, padding = 15;
+        int startX = screenW / 2 - (slotSize * 5 + padding * 4) / 2;
+        int startY = 180;
+
+        for (int i = 0; i < items.size() && i < 20; i++) {
+            int col = i % 5, row = i / 5;
+            int x = startX + col * (slotSize + padding);
+            int y = startY + row * (slotSize + padding);
+
+            if (new Rectangle(x, y, slotSize, slotSize).contains(mouseX, mouseY)) {
+                Item item = items.get(i);
+                if (item.type == Item.Type.COMBO_ABILITY) {
+                    equippedComboId = item.unlocksWeaponId;
+                    return true;
+                }
+                return false;
+            }
+        }
+        return false;
+    }
+
+    public void draw(Graphics2D g2, int screenW, int screenH, int mouseX, int mouseY) {
         g2.setColor(new Color(0, 0, 0, 220)); g2.fillRect(0, 0, screenW, screenH);
 
         g2.setColor(Color.WHITE); g2.setFont(new Font("Arial", Font.BOLD, 40));
@@ -233,10 +251,12 @@ public class InventoryManager {
         for (int i = 0; i < 20; i++) {
             int x = startX + col * (slotSize + padding);
             int y = startY + row * (slotSize + padding);
+            boolean hovered = new Rectangle(x, y, slotSize, slotSize).contains(mouseX, mouseY);
 
             g2.setColor(new Color(50, 50, 50, 150));
             g2.fillRoundRect(x, y, slotSize, slotSize, 10, 10);
-            g2.setColor(Color.GRAY); g2.drawRoundRect(x, y, slotSize, slotSize, 10, 10);
+            g2.setColor(hovered ? Color.YELLOW : Color.GRAY);
+            g2.drawRoundRect(x, y, slotSize, slotSize, 10, 10);
 
             if (i < items.size()) {
                 Item item = items.get(i);

@@ -2,6 +2,8 @@ package org.example.logic.managers;
 
 import org.example.logic.entities.Enemy;
 import org.example.logic.enums.Type;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 public class WaveManager {
@@ -9,6 +11,12 @@ public class WaveManager {
     private int enemiesLeftToSpawn = 0;
     private long lastSpawnTime = 0;
     private final long spawnDelay = 800; // Prodleva mezi jednotlivými nepřáteli (v ms)
+
+    // Zabraňuje dlouhým sériím stejného typu nepřítele za sebou (čirá náhoda
+    // uměla nahodit vlnu samých ARCHERS/THIEVES a udělat obtížnost nezáměrně nárazovou).
+    private Type lastSpawnedType = null;
+    private int sameTypeStreak = 0;
+    private static final int MAX_STREAK = 2;
 
     public void startNextWave(int wave) {
         this.currentWave = wave;
@@ -37,19 +45,57 @@ public class WaveManager {
             spawnY = Math.random() < 0.5 ? -50 : height + 50;
         }
 
+        if (currentWave >= 2 && Math.random() < 0.15) {
+            enemies.add(Enemy.createKamikaze(spawnX, spawnY, currentWave));
+            return;
+        }
+
         Type typeToSpawn = determineEnemyType();
         enemies.add(new Enemy(spawnX, spawnY, typeToSpawn, currentWave));
     }
 
     private Type determineEnemyType() {
         double rand = Math.random();
+        Type candidate;
 
-        if (currentWave == 1) return Type.THIEVES;
-        if (currentWave == 2) return (rand < 0.3) ? Type.BANDITS : Type.THIEVES;
+        if (currentWave == 1) {
+            candidate = Type.THIEVES;
+        } else if (currentWave == 2) {
+            candidate = (rand < 0.3) ? Type.BANDITS : Type.THIEVES;
+        } else if (rand < 0.2) {
+            candidate = Type.BANDITS;
+        } else if (rand < 0.5) {
+            candidate = Type.ARCHERS;
+        } else {
+            candidate = Type.THIEVES;
+        }
 
-        if (rand < 0.2) return Type.BANDITS;
-        if (rand < 0.5) return Type.ARCHERS;
-        return Type.THIEVES;
+        if (candidate == lastSpawnedType && sameTypeStreak >= MAX_STREAK) {
+            candidate = pickDifferentType(candidate);
+        }
+
+        if (candidate == lastSpawnedType) {
+            sameTypeStreak++;
+        } else {
+            lastSpawnedType = candidate;
+            sameTypeStreak = 1;
+        }
+        return candidate;
+    }
+
+    private Type pickDifferentType(Type exclude) {
+        List<Type> pool = new ArrayList<>();
+        if (currentWave == 2) {
+            pool.add(Type.THIEVES);
+            pool.add(Type.BANDITS);
+        } else if (currentWave >= 3) {
+            pool.add(Type.THIEVES);
+            pool.add(Type.BANDITS);
+            pool.add(Type.ARCHERS);
+        }
+        pool.remove(exclude);
+        if (pool.isEmpty()) return exclude; // wave 1 má jen jeden dostupný typ
+        return pool.get((int) (Math.random() * pool.size()));
     }
 
     public boolean isWaveFinished(CopyOnWriteArrayList<Enemy> enemies) {

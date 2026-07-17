@@ -45,6 +45,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
     private CutsceneManager cutsceneManager;
     private InventoryManager inventoryManager = new InventoryManager();
+    private GuiRenderer guiRenderer = new GuiRenderer();
 
     private Player player;
     private boolean up, down, left, right;
@@ -142,6 +143,8 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
     private String discordMsg = "";
     private long msgTimer = 0;
+    private long lastDiscordActionTime = 0;
+    private static final long DISCORD_ACTION_COOLDOWN = 5000; // Anti-griefing: max 1 akce diváků / 5s
     private boolean invertedControls = false;
     private long trollTimer = 0;
 
@@ -267,14 +270,16 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     }
 
     private Item generateRandomItem() {
+        // Krystaly (odemykají zbraně 2/3 a jsou craft materiál) mají teď výrazně
+        // vyšší váhu, aby postup k nim nebyl přehnaně grindový.
         int rand = (int) (Math.random() * 100);
-        if (rand < 20) return Item.createWeaponShard();
-        if (rand < 35) return Item.createHealthHeart();
-        if (rand < 50) return Item.createDamageSword();
-        if (rand < 65) return Item.createSpeedBoots();
-        if (rand < 75) return Item.createBerserkerPotion();
-        if (rand < 85) return Item.createIceCrystal();
-        if (rand < 93) return Item.createWindCrystal();
+        if (rand < 15) return Item.createWeaponShard();
+        if (rand < 27) return Item.createHealthHeart();
+        if (rand < 39) return Item.createDamageSword();
+        if (rand < 51) return Item.createSpeedBoots();
+        if (rand < 59) return Item.createBerserkerPotion();
+        if (rand < 75) return Item.createIceCrystal();
+        if (rand < 89) return Item.createWindCrystal();
         return Item.createFireCrystal();
     }
 
@@ -310,8 +315,12 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     }
 
     public void triggerDiscordAction(String text, Runnable action) {
+        long now = System.currentTimeMillis();
+        if (now - lastDiscordActionTime < DISCORD_ACTION_COOLDOWN) return; // Rate-limit proti spamu/griefingu diváků
+        lastDiscordActionTime = now;
+
         this.discordMsg = text;
-        this.msgTimer = System.currentTimeMillis() + 4000;
+        this.msgTimer = now + 4000;
         action.run();
     }
 
@@ -504,7 +513,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                 isMousePressed = false;
 
                 // NAČÍTÁNÍ PŘÍBĚHU PŘÍMO ZE SOUBORU Z RESOURCES
-                cutsceneManager.startCutsceneFromFile("/cutscene/text/text_example.txt", () -> {
+                cutsceneManager.startCutsceneFromFile("/cutscenes/texts/text_example.txt", () -> {
                     boss = new Boss(WIDTH);
                     enemies.clear();
                     gameState = State.PLAYING;
@@ -523,32 +532,37 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         souls.removeIf(Soul::isExpired);
         lootDrops.removeIf(LootDrop::isExpired);
 
+        List<LootDrop> collectedDrops = new ArrayList<>();
         for (LootDrop drop : lootDrops) {
             if (drop.getHitbox().intersects(player.getHitbox())) {
                 inventoryManager.addItem(drop.item);
                 inventoryManager.applyBonusesToPlayer(player);
-                lootDrops.remove(drop);
+                collectedDrops.add(drop);
             }
         }
+        if (!collectedDrops.isEmpty()) lootDrops.removeAll(collectedDrops);
 
+        List<Soul> collectedSouls = new ArrayList<>();
         for (Soul soul : souls) {
             if (soul.getHitbox().intersects(player.getHitbox())) {
                 player.hp = Math.min(player.maxHp, player.hp + 10);
-                souls.remove(soul);
+                collectedSouls.add(soul);
             }
         }
+        if (!collectedSouls.isEmpty()) souls.removeAll(collectedSouls);
 
+        List<Projectile> deadProjectiles = new ArrayList<>();
         for (Projectile p : projectiles) {
             p.update();
             if (p.x < 0 || p.x > WIDTH || p.y < 0 || p.y > HEIGHT) {
-                projectiles.remove(p);
+                deadProjectiles.add(p);
                 continue;
             }
 
             boolean hitWall = false;
             for (Wall wall : walls) {
                 if (p.getHitbox().intersects(wall.getHitbox())) {
-                    wall.hp -= 10; projectiles.remove(p); hitWall = true; break;
+                    wall.hp -= 10; deadProjectiles.add(p); hitWall = true; break;
                 }
             }
             if (hitWall) continue;
@@ -557,7 +571,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             boolean hitHazard = false;
             for (Hazard h : hazards) {
                 if (h.type == Hazard.Type.BARREL && p.getHitbox().intersects(h.getHitbox())) {
-                    h.hp -= 15; projectiles.remove(p); hitHazard = true;
+                    h.hp -= 15; deadProjectiles.add(p); hitHazard = true;
 
                     if (h.hp <= 0) {
                         triggerShake(10, 8);
@@ -580,7 +594,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             if (hitHazard) continue;
 
             if (boss != null && p.getHitbox().intersects(boss.getHitbox())) {
-                projectiles.remove(p);
+                deadProjectiles.add(p);
                 if (!boss.isBlocking) {
                     int baseDmg = (p.type == 5) ? 80 : (player.level >= 3 ? 50 : (player.level == 2 ? 40 : 25));
                     int dmg = baseDmg + player.bonusDamage;
@@ -637,40 +651,43 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                         if (player.level >= 3) enemy.startDotDamage(2000);
                         damageTexts.add(new DamageText(enemy.x, enemy.y, "MRAZ", Color.CYAN, false));
                     }
-                    projectiles.remove(p);
+                    deadProjectiles.add(p);
                     break;
                 }
             }
         }
+        if (!deadProjectiles.isEmpty()) projectiles.removeAll(deadProjectiles);
 
+        List<Projectile> deadEnemyProjectiles = new ArrayList<>();
         for (Projectile p : enemyProjectiles) {
             p.update();
             if (p.x < 0 || p.x > WIDTH || p.y < 0 || p.y > HEIGHT) {
-                enemyProjectiles.remove(p);
+                deadEnemyProjectiles.add(p);
                 continue;
             }
 
             boolean hitWall = false;
             for (Wall wall : walls) {
                 if (p.getHitbox().intersects(wall.getHitbox())) {
-                    wall.hp -= 5; enemyProjectiles.remove(p); hitWall = true; break;
+                    wall.hp -= 5; deadEnemyProjectiles.add(p); hitWall = true; break;
                 }
             }
             if (hitWall) continue;
 
             if (p.getHitbox().intersects(player.getHitbox()) && !player.isDashing) {
                 player.takeDamage(10);
-                enemyProjectiles.remove(p);
+                deadEnemyProjectiles.add(p);
                 damageTexts.add(new DamageText(player.x, player.y, "-10", Color.RED, true));
                 triggerShake(3, 3);
             }
             else if (player.isShieldActive || player.isFireAuraActive) {
                 double distToPlayer = Math.hypot(p.x - player.x, p.y - player.y);
                 if (distToPlayer < player.AURA_RADIUS + 20) {
-                    enemyProjectiles.remove(p);
+                    deadEnemyProjectiles.add(p);
                 }
             }
         }
+        if (!deadEnemyProjectiles.isEmpty()) enemyProjectiles.removeAll(deadEnemyProjectiles);
 
         if (player.isFireAuraActive) {
             if (System.currentTimeMillis() - lastAuraDamageTime > 500) {
@@ -698,12 +715,13 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             }
         }
 
+        List<Enemy> deadEnemies = new ArrayList<>();
         for (Enemy enemy : enemies) {
             if (enemy.hp <= 0) {
                 for(int i = 0; i < 10; i++) particles.add(new Particle(enemy.x + 15, enemy.y + 15, new Color(150, 0, 0)));
                 souls.add(new Soul(enemy.x, enemy.y));
 
-                if (Math.random() * 100 < 15) {
+                if (Math.random() * 100 < 25) {
                     lootDrops.add(new LootDrop(enemy.x, enemy.y, generateRandomItem()));
                 }
 
@@ -717,7 +735,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                     }
                 }
 
-                enemies.remove(enemy);
+                deadEnemies.add(enemy);
                 continue;
             }
 
@@ -756,6 +774,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                 }
             }
         }
+        if (!deadEnemies.isEmpty()) enemies.removeAll(deadEnemies);
 
         long currentTime = System.currentTimeMillis();
         if (currentTime - lastRpcUpdate >= 2000) {
@@ -869,6 +888,10 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         for (DamageText dt : damageTexts) dt.draw(g2);
 
         g2.translate(-shakeX, -shakeY);
+
+        if (gameState == State.PLAYING && player != null) {
+            guiRenderer.drawHUD(g2, player, realW, realH);
+        }
 
         if (gameState == State.CUTSCENE) {
             cutsceneManager.draw(g2, realW, realH);
@@ -1055,7 +1078,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                     mgSuccessHits++; mgMessage = "Pěkná rána!"; mgSpeed += 2.0; mgTargetW -= 20; mgTargetX = (int) (Math.random() * (600 - mgTargetW));
                     if (mgSuccessHits >= 3) { triggerShake(15, 10); inventoryManager.processCraftingResult(true, player); gameState = State.INVENTORY; }
                 } else {
-                    mgMessage = "Minul jsi! Suroviny jsou zničeny."; mgSuccessHits = 0; inventoryManager.processCraftingResult(false, player); gameState = State.INVENTORY;
+                    mgMessage = "Minul jsi! Zkus to znovu."; mgSuccessHits = 0; inventoryManager.processCraftingResult(false, player); gameState = State.INVENTORY;
                 }
             }
             return;
