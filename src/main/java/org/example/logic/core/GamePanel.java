@@ -1342,17 +1342,20 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             }
 
             long swapCd = player.getSwapCooldown();
-            int yOffset = (int)(30 * scale);
-
-            if (swapCd > 0) {
-                g2.setColor(Color.YELLOW); g2.drawString("Výměna: " + (Math.round(swapCd / 100.0) / 10.0) + "s", 15, yOffset);
-            }
 
             g2.setColor(new Color(0, 0, 0, 180)); g2.fillRoundRect(10, realH - 80, realW - 20, 75, 15, 15);
             g2.setColor(Color.GRAY); g2.drawRoundRect(10, realH - 80, realW - 20, 75, 15, 15);
 
             g2.setFont(new Font("Arial", Font.ITALIC, 14)); g2.setColor(Color.LIGHT_GRAY);
             g2.drawString("Aktivní schopnost: " + activeWeaponInfo, 25, realH - 55);
+
+            // Připravenost výměny zbraně - bez textu, jen barevný indikátor v rohu panelu
+            int readyDotSize = (int)(14 * scale);
+            int readyDotX = realW - 30, readyDotY = realH - 68;
+            g2.setColor(swapCd > 0 ? new Color(200, 60, 0) : new Color(60, 220, 60));
+            g2.fillOval(readyDotX, readyDotY, readyDotSize, readyDotSize);
+            g2.setColor(Color.BLACK);
+            g2.drawOval(readyDotX, readyDotY, readyDotSize, readyDotSize);
 
             g2.setFont(new Font("Arial", Font.BOLD, 16));
             FontMetrics fmSkills = g2.getFontMetrics();
