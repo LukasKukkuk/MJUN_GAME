@@ -9,6 +9,7 @@
 bin/
 out/
 src/main/resources/*.mp3
+src/main/resources/cutscenes/music/*.mp3
 
 # Maven (Složka, kam se generují buildy)
 target/

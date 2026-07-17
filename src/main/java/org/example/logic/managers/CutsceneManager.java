@@ -1,23 +1,49 @@
 package org.example.logic.managers;
 
+import javax.swing.*;
 import java.awt.*;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 
 public class CutsceneManager {
 
-    // Třída reprezentující jednu repliku (jeden "snímek" cutscény)
+    // --- ENUM PRO TYPY PŘÍKAZŮ ---
+    public enum Type { TEXT, BGM, SFX, SHAKE, CMD }
+
+    // Třída reprezentující jednu repliku nebo příkaz v cutscéně
     public static class DialogLine {
+        public Type type;
         public String characterName;
         public String text;
         public Image portrait;
-        public String voiceAudioPath; // Cesta k souboru s dabingem (např. "/voice_boss1.wav")
+        public String audioPath; // Cesta k souboru s dabingem (např. "/voice_boss1.wav")
+        public String value;     // Hodnota pro příkazy (cesta k BGM, intenzita shaku)
 
-        public DialogLine(String name, String text, Image portrait, String voiceAudioPath) {
+        // Konstruktor 1: Pro zpětnou kompatibilitu (tvůj starý kód v GamePanelu)
+        public DialogLine(String name, String text, Image portrait, String audioPath) {
+            this.type = Type.TEXT;
             this.characterName = name;
             this.text = text;
             this.portrait = portrait;
-            this.voiceAudioPath = voiceAudioPath;
+            this.audioPath = audioPath;
+        }
+
+        // Konstruktor 2: Pro načítání TEXTU ze souboru
+        public DialogLine(Type type, String name, String text, Image portrait, String audioPath) {
+            this.type = type;
+            this.characterName = name;
+            this.text = text;
+            this.portrait = portrait;
+            this.audioPath = audioPath;
+        }
+
+        // Konstruktor 3: Pro ne-textové příkazy (BGM, SFX, SHAKE)
+        public DialogLine(Type type, String value) {
+            this.type = type;
+            this.value = value;
         }
     }
 
@@ -31,14 +57,52 @@ public class CutsceneManager {
     private final int TYPE_DELAY = 30; // Rychlost psaní písmen (ms)
 
     private AudioManager audioManager;
-    private boolean isFinished = false;
+    private boolean isFinished = true; // Změněno na true v základu
     private Runnable onFinishCallback; // Co se stane, když cutscéna skončí
+
+    // Flagy pro GamePanel (např. otřes obrazovky)
+    private boolean shakeRequested = false;
+    private int shakeIntensity = 0;
 
     public CutsceneManager(AudioManager audioManager) {
         this.audioManager = audioManager;
     }
 
-    // Začne novou cutscénu
+    // --- NOVINKA: Načtení a spuštění rovnou ze souboru ---
+    public void startCutsceneFromFile(String path, Runnable onFinish) {
+        sequence.clear();
+        try (BufferedReader br = new BufferedReader(new InputStreamReader(getClass().getResourceAsStream(path)))) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                if (line.trim().isEmpty() || line.startsWith("#")) continue; // Ignoruje komentáře
+
+                // Přečtení parametrů (rozděleno středníkem)
+                String[] p = line.split(";", -1);
+                Type type = Type.valueOf(p[0].toUpperCase());
+
+                if (type == Type.TEXT) {
+                    // Přečte obrázek, pokud existuje
+                    Image portrait = null;
+                    if (p.length > 3 && !p[3].trim().isEmpty()) {
+                        URL imgUrl = getClass().getResource(p[3]);
+                        if (imgUrl != null) portrait = new ImageIcon(imgUrl).getImage();
+                    }
+                    // Přečte dabing, pokud existuje
+                    String voice = (p.length > 4 && !p[4].trim().isEmpty()) ? p[4] : null;
+                    sequence.add(new DialogLine(type, p[1], p[2], portrait, voice));
+                } else {
+                    // BGM, SFX, SHAKE, CMD
+                    sequence.add(new DialogLine(type, p[1]));
+                }
+            }
+        } catch (Exception e) {
+            System.out.println("Chyba při načítání cutscény ze souboru: " + e.getMessage());
+        }
+
+        startCutscene(sequence, onFinish);
+    }
+
+    // --- PŮVODNÍ SPUŠTĚNÍ (kompatibilní) ---
     public void startCutscene(List<DialogLine> lines, Runnable onFinish) {
         this.sequence = lines;
         this.currentIndex = 0;
@@ -53,13 +117,34 @@ public class CutsceneManager {
     }
 
     private void loadCurrentLine() {
-        displayedText = "";
-        charIndex = 0;
+        if (currentIndex >= sequence.size()) {
+            finish();
+            return;
+        }
+
         DialogLine current = sequence.get(currentIndex);
 
-        // Přehrání dabingu!
-        if (current.voiceAudioPath != null && !current.voiceAudioPath.isEmpty()) {
-            audioManager.playVoice(current.voiceAudioPath);
+        if (current.type == Type.TEXT) {
+            displayedText = "";
+            charIndex = 0;
+            // Přehrání dabingu
+            if (current.audioPath != null && !current.audioPath.isEmpty()) {
+                audioManager.playVoice(current.audioPath); // Tvůj původní dabing
+            }
+        }
+        else if (current.type == Type.BGM) {
+            if (current.value.equals("STOP")) audioManager.stopMusic();
+            else audioManager.playMusic(current.value);
+            forceNextInternal(); // Okamžitě přeskočí na další řádek (nečeká na uživatele)
+        }
+        else if (current.type == Type.SFX) {
+            audioManager.playSound(current.value);
+            forceNextInternal();
+        }
+        else if (current.type == Type.SHAKE) {
+            shakeRequested = true;
+            try { shakeIntensity = Integer.parseInt(current.value); } catch (Exception e) { shakeIntensity = 10; }
+            forceNextInternal();
         }
     }
 
@@ -68,8 +153,8 @@ public class CutsceneManager {
 
         DialogLine current = sequence.get(currentIndex);
 
-        // Postupné přidávání písmenek (Psací stroj)
-        if (charIndex < current.text.length()) {
+        // Psací stroj (pouze u TEXT příkazů)
+        if (current.type == Type.TEXT && charIndex < current.text.length()) {
             if (System.currentTimeMillis() - lastCharTime > TYPE_DELAY) {
                 displayedText += current.text.charAt(charIndex);
                 charIndex++;
@@ -80,38 +165,56 @@ public class CutsceneManager {
 
     // Funkce pro odkliknutí (Mezerník / Myš)
     public void next() {
-        if (isFinished) return;
+        if (isFinished || sequence.isEmpty()) return;
 
         DialogLine current = sequence.get(currentIndex);
 
-        // Pokud se text ještě píše, kliknutím ho vypíšeme celý rovnou
-        if (charIndex < current.text.length()) {
-            displayedText = current.text;
-            charIndex = current.text.length();
-        } else {
-            // Jdeme na další repliku
-            currentIndex++;
-            if (currentIndex >= sequence.size()) {
-                finish();
+        if (current.type == Type.TEXT) {
+            // Pokud se text ještě píše, kliknutím ho vypíšeme celý rovnou
+            if (charIndex < current.text.length()) {
+                displayedText = current.text;
+                charIndex = current.text.length();
             } else {
-                loadCurrentLine();
+                forceNextInternal();
             }
+        }
+    }
+
+    // Vnitřní posunutí (používá se pro příkazy BGM/SFX, které přeskočí samy)
+    private void forceNextInternal() {
+        currentIndex++;
+        if (currentIndex >= sequence.size()) {
+            finish();
+        } else {
+            loadCurrentLine();
         }
     }
 
     private void finish() {
         isFinished = true;
-        // Zastavíme dabing, pokud ještě mluví, a zavoláme akci po skončení
         audioManager.stopVoice();
         if (onFinishCallback != null) {
             onFinishCallback.run();
         }
     }
 
+    // API pro GamePanel k otřesení obrazovky z cutscény
+    public boolean consumeShakeRequest() {
+        if (shakeRequested) {
+            shakeRequested = false;
+            return true;
+        }
+        return false;
+    }
+    public int getShakeIntensity() { return shakeIntensity; }
+
     public void draw(Graphics2D g2, int screenW, int screenH) {
         if (isFinished || sequence.isEmpty()) return;
 
         DialogLine current = sequence.get(currentIndex);
+
+        // Kreslíme UI pouze pokud jde o TEXT, u ostatních příkazů se nekreslí nic
+        if (current.type != Type.TEXT) return;
 
         // Ztmavíme pozadí hry (filmový efekt)
         g2.setColor(new Color(0, 0, 0, 150));
@@ -131,6 +234,7 @@ public class CutsceneManager {
         g2.setColor(Color.WHITE);
         g2.setStroke(new BasicStroke(3));
         g2.drawRoundRect(230, boxY, screenW - 250, boxH, 20, 20);
+        g2.setStroke(new BasicStroke(1));
 
         // Jméno postavy (např. žlutě)
         g2.setColor(Color.YELLOW);
