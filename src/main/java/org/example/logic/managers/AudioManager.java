@@ -57,11 +57,19 @@ public class AudioManager {
         currentPlayingPath = null;
     }
 
+    // VEŘEJNÁ METODA PRO CUTSCENEMANAGER
+    public void playMusic(String path) {
+        playMusic(path, true);
+    }
+
     private void playMusic(String path, boolean loop) {
         if (path.equals(currentPlayingPath) && currentClip != null && currentClip.isRunning()) return;
         stopMusic();
         currentClip = audioCache.get(path);
-        if (currentClip == null) return;
+        if (currentClip == null) {
+            System.out.println("Hudba nenalezena v cache: " + path);
+            return;
+        }
 
         currentPlayingPath = path;
         currentClip.setFramePosition(0);
@@ -87,10 +95,10 @@ public class AudioManager {
         }
     }
 
-    // --- NOVÉ METODY PRO DABING ---
+    // --- METODY PRO DABING ---
     public void playVoice(String filePath) {
         try {
-            stopVoice(); // Zastaví předchozí větu, pokud hráč klikl moc rychle
+            stopVoice(); // Zastaví předchozí větu
             URL url = getClass().getResource(filePath);
             if (url == null) return;
 
@@ -99,8 +107,10 @@ public class AudioManager {
             voiceClip.open(audioIn);
 
             // Nastavíme hlasitost dabingu naplno
-            FloatControl gainControl = (FloatControl) voiceClip.getControl(FloatControl.Type.MASTER_GAIN);
-            gainControl.setValue(0.0f);
+            if (voiceClip.isControlSupported(FloatControl.Type.MASTER_GAIN)) {
+                FloatControl gainControl = (FloatControl) voiceClip.getControl(FloatControl.Type.MASTER_GAIN);
+                gainControl.setValue(0.0f);
+            }
 
             voiceClip.start();
         } catch (Exception e) {
@@ -112,5 +122,36 @@ public class AudioManager {
         if (voiceClip != null && voiceClip.isRunning()) {
             voiceClip.stop();
         }
+    }
+
+    // --- NOVÁ METODA PRO ZVUKOVÉ EFEKTY (SFX) ---
+    public void playSound(String filePath) {
+        new Thread(() -> {
+            try {
+                URL url = getClass().getResource(filePath);
+                if (url == null) {
+                    System.out.println("SFX nenalezeno: " + filePath);
+                    return;
+                }
+                AudioInputStream audioIn = AudioSystem.getAudioInputStream(url);
+                Clip sfxClip = AudioSystem.getClip();
+                sfxClip.open(audioIn);
+
+                // Aplikace stejné hlasitosti jako má hudba
+                if (sfxClip.isControlSupported(FloatControl.Type.MASTER_GAIN)) {
+                    FloatControl gainControl = (FloatControl) sfxClip.getControl(FloatControl.Type.MASTER_GAIN);
+                    if (currentVolume == 0) gainControl.setValue(gainControl.getMinimum());
+                    else {
+                        float db = (float) (Math.log10(currentVolume / 100.0) * 20.0);
+                        gainControl.setValue(Math.max(gainControl.getMinimum(), db));
+                    }
+                }
+
+                sfxClip.start();
+                // Necháme zvuk dohrát, vlákno se samo ukončí (SFX jsou krátké)
+            } catch (Exception e) {
+                System.out.println("Nepodařilo se přehrát SFX: " + filePath);
+            }
+        }).start();
     }
 }

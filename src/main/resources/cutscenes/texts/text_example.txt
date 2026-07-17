@@ -1,0 +1,6 @@
+BGM;/music/boss_intro.mp3
+TEXT;Temný Stín;Tak ty sis myslel, že to bude takhle jednoduché?;/boss_portrait.png;/voice/boss_1.wav
+SHAKE;8
+TEXT;Hrdina;Ukaž se, zbabělče!;/player_portrait.png;/voice/player_1.wav
+SFX;/sounds/thunder.wav
+TEXT;Temný Stín;Jsem tvůj konec. Připrav se na ZKÁZU!;/boss_portrait.png;/voice/boss_2.wav
