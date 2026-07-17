@@ -45,6 +45,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
     private CutsceneManager cutsceneManager;
     private InventoryManager inventoryManager = new InventoryManager();
+    private GuiRenderer guiRenderer = new GuiRenderer();
 
     private Player player;
     private boolean up, down, left, right;
@@ -879,6 +880,10 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         for (DamageText dt : damageTexts) dt.draw(g2);
 
         g2.translate(-shakeX, -shakeY);
+
+        if (gameState == State.PLAYING && player != null) {
+            guiRenderer.drawHUD(g2, player, realW, realH);
+        }
 
         if (gameState == State.CUTSCENE) {
             cutsceneManager.draw(g2, realW, realH);
