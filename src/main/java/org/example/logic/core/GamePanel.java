@@ -69,12 +69,13 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     // --- KOLEKCE PRO HAZARDS (PASTI) ---
     private CopyOnWriteArrayList<Hazard> hazards = new CopyOnWriteArrayList<>();
 
-    // --- VIZUÁLNÍ EFEKTY ---
+    // --- VIZUÁLNÍ EFEKTY (Juice) ---
     private CopyOnWriteArrayList<DamageText> damageTexts = new CopyOnWriteArrayList<>();
     private CopyOnWriteArrayList<Particle> particles = new CopyOnWriteArrayList<>();
     private int shakeX = 0, shakeY = 0, shakeDuration = 0, shakeIntensity = 0;
-    private String activeWeaponInfo = "";
+    private String activeWeaponInfo = ""; // Zpráva o swappnutí
 
+    // Vnitřní třída pro plovoucí čísla zranění
     private class DamageText {
         double x, y;
         String text;
@@ -103,6 +104,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         }
     }
 
+    // Vnitřní třída pro částice (krev/výbuchy)
     private class Particle {
         double x, y, dx, dy;
         int life = 255;
@@ -129,6 +131,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         }
     }
 
+    // --- PROMĚNNÉ PRO CRAFTING MINIGAME ---
     private int mgCursorX = 0;
     private int mgCursorDir = 1;
     private double mgSpeed = 6.0;
@@ -761,6 +764,31 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         }
     }
 
+    private void updateWeaponInfo() {
+        if(player == null) return;
+        swapTextTimer = System.currentTimeMillis() + 2000;
+        int lvl = player.level;
+        int bDmg = player.bonusDamage;
+
+        if (player.activeWeapon == 1) {
+            activeWeaponInfo = "Ohnivá střela: " + ((lvl >= 3 ? 50 : (lvl == 2 ? 40 : 25)) + bDmg) + " DMG" + (lvl >= 3 ? " (Plošný výbuch)" : "");
+        } else if (player.activeWeapon == 2) {
+            activeWeaponInfo = "Mráz: Zmrazí cíl" + (lvl >= 3 ? " + Jed (" + bDmg + " DMG)" : "");
+        } else if (player.activeWeapon == 3) {
+            activeWeaponInfo = "Větrný Štít: Odstrkuje nepřátele (3s)";
+        } else if (player.activeWeapon == 4) {
+            if (inventoryManager.equippedComboId == 4) {
+                activeWeaponInfo = "Aura: Pálí okolí (" + (15 + bDmg) + " DMG/s)";
+            } else if (inventoryManager.equippedComboId == 5) {
+                activeWeaponInfo = "SuperNova: 8-směrný výbuch (" + (80 + bDmg) + " DMG)";
+            } else if (inventoryManager.equippedComboId == 6) {
+                activeWeaponInfo = "Vánice: Trojitý ledový výstřel";
+            } else {
+                activeWeaponInfo = "Žádné Kombo Vybaveno!";
+            }
+        }
+    }
+
     @Override
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
@@ -1010,6 +1038,12 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             if (key == KeyEvent.VK_K) {
                 showCraftingInfo = !showCraftingInfo;
             }
+
+            if (key == KeyEvent.VK_E) {
+                inventoryManager.cycleEquippedCombo();
+                updateWeaponInfo();
+            }
+
             if (key == KeyEvent.VK_C && inventoryManager.canCraftAnything()) startMinigame();
             if (key == KeyEvent.VK_TAB || key == KeyEvent.VK_ESCAPE) gameState = State.PLAYING;
             return;
