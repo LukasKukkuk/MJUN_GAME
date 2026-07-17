@@ -39,6 +39,7 @@ public class Player {
     public boolean isDashing = false;
     public long lastDashTime = -DASH_COOLDOWN;
     private double dashDirX = 0, dashDirY = 0;
+    private double lastFacingDirX = 0, lastFacingDirY = 1; // Výchozí směr "dolů", než se hráč poprvé pohne
 
     private long lastSwapTime = 0;
     private long currentSwapCooldown = 2500;
@@ -127,6 +128,12 @@ public class Player {
                 moveX = (moveX / length) * currentSpeed;
                 moveY = (moveY / length) * currentSpeed;
             }
+
+            if (moveX != 0 || moveY != 0) {
+                double length = Math.hypot(moveX, moveY);
+                lastFacingDirX = moveX / length;
+                lastFacingDirY = moveY / length;
+            }
         }
 
         x += moveX;
@@ -148,7 +155,12 @@ public class Player {
         if (left) dx -= 1;
         if (right) dx += 1;
 
-        if (dx == 0 && dy == 0) return; // Bez směru se neuhýbá
+        if (dx == 0 && dy == 0) {
+            // Bez držené směrové klávesy uhneme ve směru posledního pohybu
+            dx = lastFacingDirX;
+            dy = lastFacingDirY;
+        }
+        if (dx == 0 && dy == 0) return;
 
         double length = Math.hypot(dx, dy);
         dashDirX = dx / length;

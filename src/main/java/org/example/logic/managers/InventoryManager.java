@@ -144,12 +144,15 @@ public class InventoryManager {
         return false;
     }
 
-    // Zpracuje výsledek minihry. Pokud success = true, vytvoří item. Pokud false, zničí suroviny!
+    // Zpracuje výsledek minihry. Suroviny se spotřebují POUZE při úspěchu -
+    // neúspěch v minihře stojí jen pokus, ne vzácné suroviny za desítky zabití.
     public void processCraftingResult(boolean success, Player player) {
+        if (!success) return;
+
         // 1. Zkratka pro úlomky zbraně (Zvyšují level hráče = odemykají zbraně 1-3)
         if (getShardCount() >= 3) {
             consumeShards(3);
-            if (success) player.level++;
+            player.level++;
             applyBonusesToPlayer(player);
             return;
         }
@@ -157,28 +160,22 @@ public class InventoryManager {
         // 2. Křížení elementů (Komba pro slot 4)
         if (hasItem("fire_crystal") && hasItem("wind_crystal")) {
             removeItem("fire_crystal"); removeItem("wind_crystal");
-            if (success) {
-                items.add(Item.createComboFireWind());
-                if (equippedComboId == 0) equippedComboId = 4;
-            }
+            items.add(Item.createComboFireWind());
+            if (equippedComboId == 0) equippedComboId = 4;
             applyBonusesToPlayer(player);
             return;
         }
         if (hasItem("fire_crystal") && hasItem("ice_crystal")) {
             removeItem("fire_crystal"); removeItem("ice_crystal");
-            if (success) {
-                items.add(Item.createComboIceFire());
-                if (equippedComboId == 0) equippedComboId = 5;
-            }
+            items.add(Item.createComboIceFire());
+            if (equippedComboId == 0) equippedComboId = 5;
             applyBonusesToPlayer(player);
             return;
         }
         if (hasItem("wind_crystal") && hasItem("ice_crystal")) {
             removeItem("wind_crystal"); removeItem("ice_crystal");
-            if (success) {
-                items.add(Item.createComboWindIce());
-                if (equippedComboId == 0) equippedComboId = 6;
-            }
+            items.add(Item.createComboWindIce());
+            if (equippedComboId == 0) equippedComboId = 6;
             applyBonusesToPlayer(player);
             return;
         }
@@ -195,9 +192,7 @@ public class InventoryManager {
 
             if (matches.size() >= 3) {
                 items.remove(matches.get(0)); items.remove(matches.get(1)); items.remove(matches.get(2));
-                if (success) {
-                    items.add(current.createUpgradedVersion());
-                }
+                items.add(current.createUpgradedVersion());
                 applyBonusesToPlayer(player);
                 return;
             }

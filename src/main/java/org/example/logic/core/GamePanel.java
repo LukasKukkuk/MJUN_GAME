@@ -143,6 +143,8 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
     private String discordMsg = "";
     private long msgTimer = 0;
+    private long lastDiscordActionTime = 0;
+    private static final long DISCORD_ACTION_COOLDOWN = 5000; // Anti-griefing: max 1 akce diváků / 5s
     private boolean invertedControls = false;
     private long trollTimer = 0;
 
@@ -268,14 +270,16 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     }
 
     private Item generateRandomItem() {
+        // Krystaly (odemykají zbraně 2/3 a jsou craft materiál) mají teď výrazně
+        // vyšší váhu, aby postup k nim nebyl přehnaně grindový.
         int rand = (int) (Math.random() * 100);
-        if (rand < 20) return Item.createWeaponShard();
-        if (rand < 35) return Item.createHealthHeart();
-        if (rand < 50) return Item.createDamageSword();
-        if (rand < 65) return Item.createSpeedBoots();
-        if (rand < 75) return Item.createBerserkerPotion();
-        if (rand < 85) return Item.createIceCrystal();
-        if (rand < 93) return Item.createWindCrystal();
+        if (rand < 15) return Item.createWeaponShard();
+        if (rand < 27) return Item.createHealthHeart();
+        if (rand < 39) return Item.createDamageSword();
+        if (rand < 51) return Item.createSpeedBoots();
+        if (rand < 59) return Item.createBerserkerPotion();
+        if (rand < 75) return Item.createIceCrystal();
+        if (rand < 89) return Item.createWindCrystal();
         return Item.createFireCrystal();
     }
 
@@ -311,8 +315,12 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     }
 
     public void triggerDiscordAction(String text, Runnable action) {
+        long now = System.currentTimeMillis();
+        if (now - lastDiscordActionTime < DISCORD_ACTION_COOLDOWN) return; // Rate-limit proti spamu/griefingu diváků
+        lastDiscordActionTime = now;
+
         this.discordMsg = text;
-        this.msgTimer = System.currentTimeMillis() + 4000;
+        this.msgTimer = now + 4000;
         action.run();
     }
 
@@ -713,7 +721,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                 for(int i = 0; i < 10; i++) particles.add(new Particle(enemy.x + 15, enemy.y + 15, new Color(150, 0, 0)));
                 souls.add(new Soul(enemy.x, enemy.y));
 
-                if (Math.random() * 100 < 15) {
+                if (Math.random() * 100 < 25) {
                     lootDrops.add(new LootDrop(enemy.x, enemy.y, generateRandomItem()));
                 }
 
@@ -1070,7 +1078,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                     mgSuccessHits++; mgMessage = "Pěkná rána!"; mgSpeed += 2.0; mgTargetW -= 20; mgTargetX = (int) (Math.random() * (600 - mgTargetW));
                     if (mgSuccessHits >= 3) { triggerShake(15, 10); inventoryManager.processCraftingResult(true, player); gameState = State.INVENTORY; }
                 } else {
-                    mgMessage = "Minul jsi! Suroviny jsou zničeny."; mgSuccessHits = 0; inventoryManager.processCraftingResult(false, player); gameState = State.INVENTORY;
+                    mgMessage = "Minul jsi! Zkus to znovu."; mgSuccessHits = 0; inventoryManager.processCraftingResult(false, player); gameState = State.INVENTORY;
                 }
             }
             return;
