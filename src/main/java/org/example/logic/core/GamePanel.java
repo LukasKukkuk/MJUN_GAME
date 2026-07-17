@@ -656,15 +656,15 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         hazards.removeIf(h -> h.type == Hazard.Type.BARREL && h.hp <= 0);
 
         if (isMousePressed && player != null && gameState == State.PLAYING) {
-            double startX = player.x + player.size / 2.0;
-            double startY = player.y + player.size / 2.0;
+            if (player.canUseAbility()) {
+                double startX = player.x + player.size / 2.0;
+                double startY = player.y + player.size / 2.0;
 
-            if (player.activeWeapon == 1 || player.activeWeapon == 2) {
-                // Bez cooldownu mezi výstřely - střílí každý snímek dokud je myš stisknutá.
-                projectiles.add(new Projectile(startX, startY, mouseTargetX, mouseTargetY, player.activeWeapon, false));
-            }
-            else if (player.canUseAbility()) {
-                if (player.activeWeapon == 3) {
+                if (player.activeWeapon == 1 || player.activeWeapon == 2) {
+                    projectiles.add(new Projectile(startX, startY, mouseTargetX, mouseTargetY, player.activeWeapon, false));
+                    player.useAbility(250);
+                }
+                else if (player.activeWeapon == 3) {
                     player.activateShield(3000, enemies);
                     isMousePressed = false;
                 }
@@ -1313,8 +1313,6 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                 g2.setColor(Color.YELLOW); g2.drawString("Výměna: " + (Math.round(swapCd / 100.0) / 10.0) + "s", 15, yOffset);
             } else if (cd > 0) {
                 g2.setColor(Color.RED); g2.drawString("Zbraň čeká: " + (Math.round(cd / 100.0) / 10.0) + "s", 15, yOffset);
-            } else {
-                g2.setColor(Color.GREEN); g2.drawString("PŘIPRAVENO", 15, yOffset);
             }
 
             g2.setColor(new Color(0, 0, 0, 180)); g2.fillRoundRect(10, realH - 80, realW - 20, 75, 15, 15);
