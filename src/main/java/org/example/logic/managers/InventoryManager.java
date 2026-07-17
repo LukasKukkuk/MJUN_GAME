@@ -157,7 +157,17 @@ public class InventoryManager {
             return;
         }
 
-        // 2. Křížení elementů (Komba pro slot 4)
+        // 2. Ultimátní kombo (všechny 3 krystaly najednou) - kontroluje se první,
+        // aby vzácnější kombinace nezanikla v obyčejném párovém craftu.
+        if (hasItem("fire_crystal") && hasItem("wind_crystal") && hasItem("ice_crystal")) {
+            removeItem("fire_crystal"); removeItem("wind_crystal"); removeItem("ice_crystal");
+            items.add(Item.createComboMeteor());
+            if (equippedComboId == 0) equippedComboId = 7;
+            applyBonusesToPlayer(player);
+            return;
+        }
+
+        // 3. Křížení elementů (Komba pro slot 4)
         if (hasItem("fire_crystal") && hasItem("wind_crystal")) {
             removeItem("fire_crystal"); removeItem("wind_crystal");
             items.add(Item.createComboFireWind());
@@ -180,7 +190,7 @@ public class InventoryManager {
             return;
         }
 
-        // 3. Slučování 3 stejných předmětů (Stat boosty)
+        // 4. Slučování 3 stejných předmětů (Stat boosty)
         for (int i = 0; i < items.size(); i++) {
             Item current = items.get(i);
             if (current.type == Item.Type.CRAFTING_MAT || current.type == Item.Type.COMBO_ABILITY) continue;
@@ -234,7 +244,10 @@ public class InventoryManager {
         // UI pro výběr Komba
         if (equippedComboId != 0) {
             g2.setColor(Color.CYAN);
-            String comboName = (equippedComboId == 4) ? "Ohnivá Aura" : (equippedComboId == 5) ? "SuperNova (8-směr)" : "Vánice (Rychlopalba)";
+            String comboName = (equippedComboId == 4) ? "Ohnivá Aura"
+                    : (equippedComboId == 5) ? "SuperNova (8-směr)"
+                    : (equippedComboId == 6) ? "Vánice (Rychlopalba)"
+                    : "Meteor (Plošný zásah)";
             g2.drawString(">>> [E] Vybavené Kombo (Zbraň 4): " + comboName + " <<<", screenW / 2 - 250, 130);
         }
 

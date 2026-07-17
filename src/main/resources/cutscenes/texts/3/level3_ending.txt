@@ -1,0 +1,6 @@
+BGM;/cutscenes/music/boss_intro.mp3
+TEXT;Temný Stín;Porazil jsi mou stínovou formu, MJUNe. Ale to bylo jen echo.;/boss_portrait.png;/voice/boss_1.wav
+SHAKE;10
+TEXT;Temný Stín;Teď poznáš, co se probouzí, když stín skutečně otevře oči.;/boss_portrait.png;/voice/boss_2.wav
+TEXT;MJUN;Tak pojď. Tohle je moje narozeninová oslava.;/player_portrait.png;/voice/player_1.wav
+SFX;/sounds/thunder.wav

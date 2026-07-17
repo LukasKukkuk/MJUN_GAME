@@ -1,0 +1,4 @@
+BGM;/menu.mp3
+TEXT;Vypravěč;A tak padl i poslední stín, který se odvážil postavit MJUNovi do cesty.;;
+TEXT;Vypravěč;Šťastné narozeniny, MJUNe. Ať je tenhle rok stejně epický jako tahle bitva.;;
+TEXT;MJUN;...to bylo jen zahřátí. Dej mi Endless mód.;;
