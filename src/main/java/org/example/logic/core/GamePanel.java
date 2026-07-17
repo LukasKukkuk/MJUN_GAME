@@ -31,7 +31,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     private boolean isRunning = false;
     private final int FPS = 60;
 
-    private enum State { LOADING, MENU, PLAYING, SETTINGS, INVENTORY, VICTORY, CUTSCENE, MINIGAME, BUILD_SELECT }
+    private enum State { LOADING, MENU, PLAYING, SETTINGS, INVENTORY, VICTORY, CUTSCENE, MINIGAME, BUILD_SELECT, ACHIEVEMENTS }
     private State gameState = State.LOADING;
 
     private int loadingProgress = 0;
@@ -57,8 +57,8 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     private int mouseTargetX = 0;
     private int mouseTargetY = 0;
 
-    // --- OVLÁDÁNÍ CRAFTING INFA POMOCÍ KLÁVESY K ---
-    public boolean showCraftingInfo = false;
+    // Předměty čekající na výsledek minihry při kombinování v inventáři
+    private Item pendingCombineA, pendingCombineB;
 
     private CopyOnWriteArrayList<Enemy> enemies = new CopyOnWriteArrayList<>();
     private CopyOnWriteArrayList<Projectile> projectiles = new CopyOnWriteArrayList<>();
@@ -1133,8 +1133,48 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             g2.drawString(meta, (realW - g2.getFontMetrics().stringWidth(meta)) / 2, menuY + spacing * 4 + 30);
 
             g2.setColor(new Color(255, 215, 0));
-            String achText = "Achievementy: " + ConfigManager.unlockedAchievements.size() + "/" + AchievementManager.ALL.size();
+            String achText = "[A] Achievementy: " + ConfigManager.unlockedAchievements.size() + "/" + AchievementManager.ALL.size();
             g2.drawString(achText, (realW - g2.getFontMetrics().stringWidth(achText)) / 2, menuY + spacing * 4 + 55);
+            return;
+        }
+
+        if (gameState == State.ACHIEVEMENTS) {
+            Font achTitleFont = new Font("Arial", Font.BOLD, (int)(34 * scale));
+            g2.setColor(Color.WHITE); g2.setFont(achTitleFont);
+            String achScreenTitle = "ACHIEVEMENTY";
+            g2.drawString(achScreenTitle, (realW - g2.getFontMetrics().stringWidth(achScreenTitle)) / 2, (int)(55 * scale));
+
+            Font achHintFont = new Font("Arial", Font.ITALIC, (int)(14 * scale));
+            g2.setColor(Color.LIGHT_GRAY); g2.setFont(achHintFont);
+            String achHint = "[TAB/ESC] Zpět do menu";
+            g2.drawString(achHint, (realW - g2.getFontMetrics().stringWidth(achHint)) / 2, (int)(78 * scale));
+
+            int listY = (int)(120 * scale);
+            int rowHeight = (int)(55 * scale);
+            Font nameFont = new Font("Arial", Font.BOLD, (int)(18 * scale));
+            Font descFont = new Font("Arial", Font.PLAIN, (int)(14 * scale));
+
+            for (Achievement a : AchievementManager.ALL) {
+                boolean unlocked = ConfigManager.isAchievementUnlocked(a.id);
+                int boxX = (int)(60 * scale), boxW = realW - (int)(120 * scale);
+
+                g2.setColor(unlocked ? new Color(40, 40, 0, 200) : new Color(30, 30, 30, 200));
+                g2.fillRoundRect(boxX, listY, boxW, rowHeight - 10, 10, 10);
+                g2.setColor(unlocked ? new Color(255, 215, 0) : Color.DARK_GRAY);
+                g2.drawRoundRect(boxX, listY, boxW, rowHeight - 10, 10, 10);
+
+                g2.setFont(nameFont);
+                g2.setColor(unlocked ? new Color(255, 215, 0) : Color.GRAY);
+                String title = unlocked ? ("🏆 " + a.title) : (a.secret ? "??? (tajný achievement)" : a.title);
+                g2.drawString(title, boxX + 15, listY + (int)(22 * scale));
+
+                g2.setFont(descFont);
+                g2.setColor(unlocked ? Color.WHITE : Color.DARK_GRAY);
+                String desc = unlocked ? a.description : (a.secret ? "Objevíš, až ho odemkneš." : a.description);
+                g2.drawString(desc, boxX + 15, listY + (int)(40 * scale));
+
+                listY += rowHeight;
+            }
             return;
         }
 
@@ -1348,11 +1388,43 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     public void mousePressed(MouseEvent e) {
         if (SwingUtilities.isLeftMouseButton(e)) {
             if (gameState == State.INVENTORY) {
-                boolean swapped = inventoryManager.tryEquipItemAt(e.getX(), e.getY(), WIDTH, HEIGHT);
-                if(swapped) updateWeaponInfo();
+                handleInventoryClick(e.getX(), e.getY());
             } else {
                 isMousePressed = true; mouseTargetX = e.getX(); mouseTargetY = e.getY();
             }
+        }
+    }
+
+    // Klik na první předmět ho vybere, klik na druhý (kompatibilní) spustí kovářskou minihru.
+    private void handleInventoryClick(int mouseX, int mouseY) {
+        int slot = inventoryManager.getSlotAt(mouseX, mouseY, WIDTH, HEIGHT);
+
+        if (slot == -1 || slot >= inventoryManager.items.size()) {
+            inventoryManager.selectedSlot = -1;
+            return;
+        }
+
+        if (inventoryManager.selectedSlot == -1) {
+            inventoryManager.selectedSlot = slot;
+            return;
+        }
+
+        if (inventoryManager.selectedSlot == slot) {
+            inventoryManager.selectedSlot = -1; // klik na stejný předmět zruší výběr
+            return;
+        }
+
+        Item a = inventoryManager.items.get(inventoryManager.selectedSlot);
+        Item b = inventoryManager.items.get(slot);
+        inventoryManager.selectedSlot = -1;
+
+        if (inventoryManager.canCombine(a, b)) {
+            pendingCombineA = a;
+            pendingCombineB = b;
+            startMinigame();
+        } else {
+            discordMsg = "Tyto předměty nelze kombinovat";
+            msgTimer = System.currentTimeMillis() + 2000;
         }
     }
 
@@ -1372,6 +1444,12 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             if (key == KeyEvent.VK_3) gameState = State.SETTINGS;
             if (key == KeyEvent.VK_4) { pendingStartWave = ConfigManager.highestWave; gameState = State.BUILD_SELECT; }
             if (key == KeyEvent.VK_C) coopEnabled = !coopEnabled;
+            if (key == KeyEvent.VK_A) gameState = State.ACHIEVEMENTS;
+            return;
+        }
+
+        if (gameState == State.ACHIEVEMENTS) {
+            if (key == KeyEvent.VK_TAB || key == KeyEvent.VK_ESCAPE) gameState = State.MENU;
             return;
         }
 
@@ -1395,18 +1473,15 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         }
 
         if (gameState == State.INVENTORY) {
-            // KLÁVESA K PRO ZAPNUTÍ CRAFTING INFA NA EXPONÁTECH
-            if (key == KeyEvent.VK_K) {
-                showCraftingInfo = !showCraftingInfo;
-            }
-
             if (key == KeyEvent.VK_E) {
                 inventoryManager.cycleEquippedCombo();
                 updateWeaponInfo();
             }
 
-            if (key == KeyEvent.VK_C && inventoryManager.canCraftAnything()) startMinigame();
-            if (key == KeyEvent.VK_TAB || key == KeyEvent.VK_ESCAPE) gameState = State.PLAYING;
+            if (key == KeyEvent.VK_TAB || key == KeyEvent.VK_ESCAPE) {
+                inventoryManager.selectedSlot = -1;
+                gameState = State.PLAYING;
+            }
             return;
         }
 
@@ -1414,9 +1489,18 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             if (key == KeyEvent.VK_SPACE) {
                 if (mgCursorX >= mgTargetX && mgCursorX <= mgTargetX + mgTargetW) {
                     mgSuccessHits++; mgMessage = "Pěkná rána!"; mgSpeed += 2.0; mgTargetW -= 20; mgTargetX = (int) (Math.random() * (600 - mgTargetW));
-                    if (mgSuccessHits >= 3) { triggerShake(15, 10); inventoryManager.processCraftingResult(true, player); tryUnlockAchievement("crafter"); gameState = State.INVENTORY; }
+                    if (mgSuccessHits >= 3) {
+                        triggerShake(15, 10);
+                        inventoryManager.processCombineResult(true, player, pendingCombineA, pendingCombineB);
+                        tryUnlockAchievement("crafter");
+                        pendingCombineA = null; pendingCombineB = null;
+                        gameState = State.INVENTORY;
+                    }
                 } else {
-                    mgMessage = "Minul jsi! Zkus to znovu."; mgSuccessHits = 0; inventoryManager.processCraftingResult(false, player); gameState = State.INVENTORY;
+                    mgMessage = "Minul jsi! Zkus to znovu."; mgSuccessHits = 0;
+                    inventoryManager.processCombineResult(false, player, pendingCombineA, pendingCombineB);
+                    pendingCombineA = null; pendingCombineB = null;
+                    gameState = State.INVENTORY;
                 }
             }
             return;
