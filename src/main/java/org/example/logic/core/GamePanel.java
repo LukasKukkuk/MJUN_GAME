@@ -193,9 +193,12 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                 Thread.sleep(1000);
                 Dotenv dotenv = Dotenv.configure().ignoreIfMissing().load();
                 String token = dotenv.get("DISCORD_TOKEN");
+                // Adresa bota jde přepsat přes .env (např. ws://127.0.0.1:11536 pro lokální test),
+                // bez zásahu do kódu. Bez nastavení se použije ostrá vzdálená adresa jako dřív.
+                String wsUrl = dotenv.get("DISCORD_WS_URL", "ws://212.227.7.153:11536");
 
                 if (token != null && !token.isEmpty()) {
-                    discordManager = new DiscordManager(this, "ws://212.227.7.153:11536");
+                    discordManager = new DiscordManager(this, wsUrl);
                     discordManager.connect();
 
                     String discordId = DiscordRPCManager.getUserId();
