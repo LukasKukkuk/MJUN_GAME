@@ -12,14 +12,16 @@ import io.github.cdimascio.dotenv.Dotenv;
 import java.time.OffsetDateTime;
 
 public class DiscordRPCManager {
-    private static IPCClient client;
-    private static boolean initialized = false;
+    // volatile - client/initialized/discordUserId se zapisují z připojovacího vlákna
+    // (DiscordRPC-Connect) a čtou z herního vlákna i EDT (updatePresence/stop/getUserId).
+    private static volatile IPCClient client;
+    private static volatile boolean initialized = false;
 
     private static long APPLICATION_ID = 0;
     private static long startTimestamp = 0;
 
     // Nová proměnná pro uložení ID hráče
-    private static String discordUserId = null;
+    private static volatile String discordUserId = null;
 
     static {
         try {
@@ -47,38 +49,59 @@ public class DiscordRPCManager {
             return;
         }
 
-        try {
-            client = new IPCClient(APPLICATION_ID);
+        // Spustí se v samostatném vlákně, protože zkouší opakovaně navázat spojení
+        // s lokálním Discordem (handshake může selhat kvůli chybě v knihovně nebo
+        // proto, že Discord ještě nebyl v okamžiku startu hry plně nastartovaný).
+        new Thread(() -> {
+            int maxAttempts = 5;
+            long retryDelayMs = 4000;
 
-            client.setListener(new IPCListener() {
-                @Override
-                public void onReady(IPCClient client) {
-                    System.out.println("✅ Osobní Discord RPC úspěšně napojeno na váš profil!");
-                    initialized = true;
-                    startTimestamp = OffsetDateTime.now().toEpochSecond();
+            for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+                try {
+                    IPCClient newClient = new IPCClient(APPLICATION_ID);
 
-                    // Vytáhneme si ID z běžícího Discordu
-                    if (client.getCurrentUser() != null) {
-                        discordUserId = client.getCurrentUser().getId();
-                        System.out.println("👤 Automaticky detekováno Discord ID hráče: " + discordUserId);
+                    newClient.setListener(new IPCListener() {
+                        @Override
+                        public void onReady(IPCClient client) {
+                            System.out.println("✅ Osobní Discord RPC úspěšně napojeno na váš profil!");
+                            initialized = true;
+                            startTimestamp = OffsetDateTime.now().toEpochSecond();
+
+                            // Vytáhneme si ID z běžícího Discordu
+                            if (client.getCurrentUser() != null) {
+                                discordUserId = client.getCurrentUser().getId();
+                                System.out.println("👤 Automaticky detekováno Discord ID hráče: " + discordUserId);
+                            }
+                        }
+
+                        @Override public void onClose(IPCClient client, JsonObject json) {}
+                        @Override public void onDisconnect(IPCClient client, Throwable t) {}
+                        public void onError(IPCClient client, Throwable t) {}
+                        @Override public void onPacketSent(IPCClient client, Packet packet) {}
+                        @Override public void onPacketReceived(IPCClient client, Packet packet) {}
+                        @Override public void onActivityJoin(IPCClient client, String secret) {}
+                        @Override public void onActivitySpectate(IPCClient client, String secret) {}
+                        @Override public void onActivityJoinRequest(IPCClient ipcClient, String s, User user) {}
+                        public void onActivityJoinRequest(IPCClient client, JsonObject request) {}
+                    });
+
+                    newClient.connect();
+                    client = newClient;
+                    return; // úspěch - žádné další pokusy
+                } catch (Exception e) {
+                    System.out.println("⚠️ Pokus " + attempt + "/" + maxAttempts + " o připojení k lokálnímu Discordu selhal: " + e.getMessage());
+                    if (attempt < maxAttempts) {
+                        try {
+                            Thread.sleep(retryDelayMs);
+                        } catch (InterruptedException interrupted) {
+                            Thread.currentThread().interrupt();
+                            return;
+                        }
                     }
                 }
-
-                @Override public void onClose(IPCClient client, JsonObject json) {}
-                @Override public void onDisconnect(IPCClient client, Throwable t) {}
-                public void onError(IPCClient client, Throwable t) {}
-                @Override public void onPacketSent(IPCClient client, Packet packet) {}
-                @Override public void onPacketReceived(IPCClient client, Packet packet) {}
-                @Override public void onActivityJoin(IPCClient client, String secret) {}
-                @Override public void onActivitySpectate(IPCClient client, String secret) {}
-                @Override public void onActivityJoinRequest(IPCClient ipcClient, String s, User user) {}
-                public void onActivityJoinRequest(IPCClient client, JsonObject request) {}
-            });
-
-            client.connect();
-        } catch (Exception e) {
-            System.out.println("⚠️ Nepodařilo se připojit lokální Discord: " + e.getMessage());
-        }
+            }
+            System.out.println("⚠️ Lokální Discord RPC se nepodařilo napojit po " + maxAttempts + " pokusech - hráč zůstane bez auto-detekovaného ID.");
+        }, "DiscordRPC-Connect").start();
     }
 
     public static void updatePresence(int wave, int hp, int enemiesCount) {
