@@ -141,9 +141,12 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     private int mgSuccessHits = 0;
     private String mgMessage = "Kovadlina je připravena...";
 
-    private String discordMsg = "";
-    private long msgTimer = 0;
-    private long lastDiscordActionTime = 0;
+    // volatile - triggerDiscordAction() se volá z WebSocket I/O vlákna (DiscordManager.onMessage),
+    // zatímco render čte tahle pole na EDT. Bez volatile nebyla zápisu z jiného vlákna zaručená
+    // včasná viditelnost - hra mohla akci přijmout, ale banner se nemusel vůbec vykreslit.
+    private volatile String discordMsg = "";
+    private volatile long msgTimer = 0;
+    private volatile long lastDiscordActionTime = 0;
     private static final long DISCORD_ACTION_COOLDOWN = 5000; // Anti-griefing: max 1 akce diváků / 5s
 
     // --- ACHIEVEMENT TOAST ---
@@ -500,7 +503,11 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
     public void triggerDiscordAction(String text, Runnable action) {
         long now = System.currentTimeMillis();
-        if (now - lastDiscordActionTime < DISCORD_ACTION_COOLDOWN) return; // Rate-limit proti spamu/griefingu diváků
+        if (now - lastDiscordActionTime < DISCORD_ACTION_COOLDOWN) {
+            // Není to chyba - jen rate-limit. Loguje se, ať to nevypadá jako tiše ztracená akce.
+            System.out.println("⏳ Akce od diváků ignorována (rate-limit, další za " + (DISCORD_ACTION_COOLDOWN - (now - lastDiscordActionTime)) + "ms): " + text);
+            return;
+        }
         lastDiscordActionTime = now;
 
         this.discordMsg = text;
