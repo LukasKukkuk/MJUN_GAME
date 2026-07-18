@@ -141,9 +141,12 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     private int mgSuccessHits = 0;
     private String mgMessage = "Kovadlina je připravena...";
 
-    private String discordMsg = "";
-    private long msgTimer = 0;
-    private long lastDiscordActionTime = 0;
+    // volatile - triggerDiscordAction() se volá z WebSocket I/O vlákna (DiscordManager.onMessage),
+    // zatímco render čte tahle pole na EDT. Bez volatile nebyla zápisu z jiného vlákna zaručená
+    // včasná viditelnost - hra mohla akci přijmout, ale banner se nemusel vůbec vykreslit.
+    private volatile String discordMsg = "";
+    private volatile long msgTimer = 0;
+    private volatile long lastDiscordActionTime = 0;
     private static final long DISCORD_ACTION_COOLDOWN = 5000; // Anti-griefing: max 1 akce diváků / 5s
 
     // --- ACHIEVEMENT TOAST ---
@@ -193,9 +196,12 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                 Thread.sleep(1000);
                 Dotenv dotenv = Dotenv.configure().ignoreIfMissing().load();
                 String token = dotenv.get("DISCORD_TOKEN");
+                // Adresa bota jde přepsat přes .env (např. ws://127.0.0.1:11536 pro lokální test),
+                // bez zásahu do kódu. Bez nastavení se použije ostrá vzdálená adresa jako dřív.
+                String wsUrl = dotenv.get("DISCORD_WS_URL", "ws://212.227.7.153:11536");
 
                 if (token != null && !token.isEmpty()) {
-                    discordManager = new DiscordManager(this, "ws://212.227.7.153:11536");
+                    discordManager = new DiscordManager(this, wsUrl);
                     discordManager.connect();
 
                     String discordId = DiscordRPCManager.getUserId();
@@ -497,7 +503,11 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
     public void triggerDiscordAction(String text, Runnable action) {
         long now = System.currentTimeMillis();
-        if (now - lastDiscordActionTime < DISCORD_ACTION_COOLDOWN) return; // Rate-limit proti spamu/griefingu diváků
+        if (now - lastDiscordActionTime < DISCORD_ACTION_COOLDOWN) {
+            // Není to chyba - jen rate-limit. Loguje se, ať to nevypadá jako tiše ztracená akce.
+            System.out.println("⏳ Akce od diváků ignorována (rate-limit, další za " + (DISCORD_ACTION_COOLDOWN - (now - lastDiscordActionTime)) + "ms): " + text);
+            return;
+        }
         lastDiscordActionTime = now;
 
         this.discordMsg = text;
@@ -1055,6 +1065,37 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         }
     }
 
+    // Banner z Discord viewer akcí a achievement toast - kreslí se úplně navrchu,
+    // nezávisle na tom, v jakém stavu hra zrovna je (cutscéna/inventář/minihra/vítězství),
+    // aby akce diváka nezmizela beze stopy jen proto, že hráč zrovna prochází menu.
+    private void drawViewerNotifications(Graphics2D g2, int realW, int realH, float scale) {
+        if (System.currentTimeMillis() < msgTimer) {
+            int boxHeight = (int)(60 * scale);
+            g2.setColor(new Color(0, 0, 0, 180)); g2.fillRect(0, realH / 2 - boxHeight/2, realW, boxHeight);
+            g2.setColor(Color.CYAN); g2.setFont(new Font("Arial", Font.BOLD, (int)(30 * scale)));
+            FontMetrics fmMsg = g2.getFontMetrics(); int textX = (realW - fmMsg.stringWidth(discordMsg)) / 2;
+            g2.drawString(discordMsg, textX, realH / 2 + fmMsg.getAscent()/4);
+        }
+
+        if (System.currentTimeMillis() < achievementToastTimer) {
+            int toastW = (int)(360 * scale), toastH = (int)(55 * scale);
+            int toastX = (realW - toastW) / 2, toastY = (int)(70 * scale);
+
+            g2.setColor(new Color(0, 0, 0, 200)); g2.fillRoundRect(toastX, toastY, toastW, toastH, 12, 12);
+            g2.setColor(new Color(255, 215, 0)); g2.setStroke(new BasicStroke(2));
+            g2.drawRoundRect(toastX, toastY, toastW, toastH, 12, 12);
+            g2.setStroke(new BasicStroke(1));
+
+            g2.setFont(new Font("Arial", Font.BOLD, (int)(16 * scale)));
+            g2.setColor(new Color(255, 215, 0));
+            g2.drawString(achievementToastTitle, toastX + 12, toastY + (int)(22 * scale));
+
+            g2.setFont(new Font("Arial", Font.PLAIN, (int)(13 * scale)));
+            g2.setColor(Color.WHITE);
+            g2.drawString(achievementToastDesc, toastX + 12, toastY + (int)(40 * scale));
+        }
+    }
+
     @Override
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
@@ -1250,11 +1291,13 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
         if (gameState == State.CUTSCENE) {
             cutsceneManager.draw(g2, realW, realH);
+            drawViewerNotifications(g2, realW, realH, scale);
             return;
         }
 
         if (gameState == State.INVENTORY) {
             inventoryManager.draw(g2, realW, realH, mouseTargetX, mouseTargetY);
+            drawViewerNotifications(g2, realW, realH, scale);
             return;
         }
 
@@ -1276,6 +1319,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             g2.setColor(Color.GRAY); g2.fillRect(barX, barY, 600, 40);
             g2.setColor(Color.GREEN); g2.fillRect(barX + mgTargetX, barY, mgTargetW, 40);
             g2.setColor(Color.WHITE); g2.fillRect(barX + mgCursorX - 5, barY - 10, 10, 60);
+            drawViewerNotifications(g2, realW, realH, scale);
             return;
         }
 
@@ -1288,34 +1332,11 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             g2.drawString("[1] Jít do Endless módu (Ponechat si Vybavení)", realW/2 - (int)(220*scale), realH/2);
             g2.drawString("[2] Jít do Endless módu Čistý (Hardcore)", realW/2 - (int)(220*scale), realH/2 + (int)(50*scale));
             g2.drawString("[3] Zpět do Menu", realW/2 - (int)(220*scale), realH/2 + (int)(100*scale));
+            drawViewerNotifications(g2, realW, realH, scale);
             return;
         }
 
-        if (System.currentTimeMillis() < msgTimer) {
-            int boxHeight = (int)(60 * scale);
-            g2.setColor(new Color(0, 0, 0, 180)); g2.fillRect(0, realH / 2 - boxHeight/2, realW, boxHeight);
-            g2.setColor(Color.CYAN); g2.setFont(new Font("Arial", Font.BOLD, (int)(30 * scale)));
-            FontMetrics fmMsg = g2.getFontMetrics(); int textX = (realW - fmMsg.stringWidth(discordMsg)) / 2;
-            g2.drawString(discordMsg, textX, realH / 2 + fmMsg.getAscent()/4);
-        }
-
-        if (System.currentTimeMillis() < achievementToastTimer) {
-            int toastW = (int)(360 * scale), toastH = (int)(55 * scale);
-            int toastX = (realW - toastW) / 2, toastY = (int)(70 * scale);
-
-            g2.setColor(new Color(0, 0, 0, 200)); g2.fillRoundRect(toastX, toastY, toastW, toastH, 12, 12);
-            g2.setColor(new Color(255, 215, 0)); g2.setStroke(new BasicStroke(2));
-            g2.drawRoundRect(toastX, toastY, toastW, toastH, 12, 12);
-            g2.setStroke(new BasicStroke(1));
-
-            g2.setFont(new Font("Arial", Font.BOLD, (int)(16 * scale)));
-            g2.setColor(new Color(255, 215, 0));
-            g2.drawString(achievementToastTitle, toastX + 12, toastY + (int)(22 * scale));
-
-            g2.setFont(new Font("Arial", Font.PLAIN, (int)(13 * scale)));
-            g2.setColor(Color.WHITE);
-            g2.drawString(achievementToastDesc, toastX + 12, toastY + (int)(40 * scale));
-        }
+        drawViewerNotifications(g2, realW, realH, scale);
 
         int uiFontSize = (int)(18 * scale);
         g2.setFont(new Font("Arial", Font.BOLD, uiFontSize));
