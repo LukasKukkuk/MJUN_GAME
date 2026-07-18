@@ -30,16 +30,22 @@ public class DiscordManager extends WebSocketClient {
                     attempts++;
                 }
 
+                io.github.cdimascio.dotenv.Dotenv dotenv = io.github.cdimascio.dotenv.Dotenv.configure().ignoreIfMissing().load();
+
                 String finalId = DiscordRPCManager.getUserId();
                 if (finalId == null) {
                     System.out.println("⚠️ RPC nedodalo ID včas, zkouším zálohu z .env...");
-                    io.github.cdimascio.dotenv.Dotenv dotenv = io.github.cdimascio.dotenv.Dotenv.configure().ignoreIfMissing().load();
                     finalId = dotenv.get("PLAYER_DISCORD_ID", "0");
                 }
+
+                // Sdílený token mezi hrou a botem (NENÍ to token samotného Discord bota) -
+                // bez něj bot registraci odmítne (WS close kód 4001).
+                String sharedToken = dotenv.get("DISCORD_TOKEN", "");
 
                 JsonObject welcomeMsg = new JsonObject();
                 welcomeMsg.addProperty("type", "register");
                 welcomeMsg.addProperty("discord_id", finalId);
+                welcomeMsg.addProperty("token", sharedToken);
 
                 send(welcomeMsg.toString());
                 System.out.println("📤 Registrace odeslána s ID: " + finalId);
@@ -74,7 +80,11 @@ public class DiscordManager extends WebSocketClient {
 
     @Override
     public void onClose(int code, String reason, boolean remote) {
-        System.out.println("🌐 ❌ Odpojeno od Python bota: " + reason);
+        if (code == 4001) {
+            System.out.println("🌐 ❌ Registrace u Discord bota odmítnuta - zkontroluj DISCORD_TOKEN v .env (musí sedět se sdíleným tokenem na straně bota).");
+        } else {
+            System.out.println("🌐 ❌ Odpojeno od Python bota: " + reason);
+        }
     }
 
     @Override
