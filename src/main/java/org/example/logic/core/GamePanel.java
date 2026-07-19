@@ -31,7 +31,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     private boolean isRunning = false;
     private final int FPS = 60;
 
-    private enum State { LOADING, MENU, PLAYING, SETTINGS, INVENTORY, VICTORY, CUTSCENE, MINIGAME }
+    private enum State { LOADING, MENU, PLAYING, SETTINGS, INVENTORY, VICTORY, CUTSCENE, MINIGAME, BUILD_SELECT, ACHIEVEMENTS, CREDITS }
     private State gameState = State.LOADING;
 
     private int loadingProgress = 0;
@@ -57,8 +57,8 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     private int mouseTargetX = 0;
     private int mouseTargetY = 0;
 
-    // --- OVLÁDÁNÍ CRAFTING INFA POMOCÍ KLÁVESY K ---
-    public boolean showCraftingInfo = false;
+    // Předměty čekající na výsledek minihry při kombinování v inventáři
+    private Item pendingCombineA, pendingCombineB;
 
     private CopyOnWriteArrayList<Enemy> enemies = new CopyOnWriteArrayList<>();
     private CopyOnWriteArrayList<Projectile> projectiles = new CopyOnWriteArrayList<>();
@@ -141,10 +141,18 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     private int mgSuccessHits = 0;
     private String mgMessage = "Kovadlina je připravena...";
 
-    private String discordMsg = "";
-    private long msgTimer = 0;
-    private long lastDiscordActionTime = 0;
+    // volatile - triggerDiscordAction() se volá z WebSocket I/O vlákna (DiscordManager.onMessage),
+    // zatímco render čte tahle pole na EDT. Bez volatile nebyla zápisu z jiného vlákna zaručená
+    // včasná viditelnost - hra mohla akci přijmout, ale banner se nemusel vůbec vykreslit.
+    private volatile String discordMsg = "";
+    private volatile long msgTimer = 0;
+    private volatile long lastDiscordActionTime = 0;
     private static final long DISCORD_ACTION_COOLDOWN = 5000; // Anti-griefing: max 1 akce diváků / 5s
+
+    // --- ACHIEVEMENT TOAST ---
+    private String achievementToastTitle = "";
+    private String achievementToastDesc = "";
+    private long achievementToastTimer = 0;
     private boolean invertedControls = false;
     private long trollTimer = 0;
 
@@ -152,6 +160,25 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     private long swapTextTimer = 0;
     private int currentWave = 1;
     private boolean showTutorial = true;
+    private boolean introPlayed = false;
+    private static final int FINAL_BOSS_WAVE = 6;
+    private boolean finalBossDefeated = false;
+
+    // --- VOLBA BUILDU NA STARTU ---
+    private int pendingStartWave = 1;
+    private int selectedBuild = 0; // 0 = Tank, 1 = Rychlý, 2 = Glass Cannon
+
+    // --- LOKÁLNÍ CO-OP (2. HRÁČ) ---
+    // Druhý hráč má vlastní HP (může zemřít nezávisle na prvním), ale sdílí
+    // InventoryManager/postup s hráčem 1. Šipky = pohyb, ENTER = auto-útok na
+    // nejbližšího nepřítele, CTRL = dash. Zbraň i poškození sdílí formuli s hráčem 1,
+    // protože Projectile nenese informaci o vlastníkovi - jde o vědomé zjednodušení.
+    private boolean coopEnabled = false;
+    private Player player2;
+    private boolean up2, down2, left2, right2;
+    private boolean player2FireHeld = false;
+    private long player2LastShotTime = 0;
+    private static final long PLAYER2_FIRE_COOLDOWN = 350;
     private Image[] playerWalkAnim;
 
     public GamePanel() {
@@ -169,9 +196,12 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                 Thread.sleep(1000);
                 Dotenv dotenv = Dotenv.configure().ignoreIfMissing().load();
                 String token = dotenv.get("DISCORD_TOKEN");
+                // Adresa bota jde přepsat přes .env (např. ws://127.0.0.1:11536 pro lokální test),
+                // bez zásahu do kódu. Bez nastavení se použije ostrá vzdálená adresa jako dřív.
+                String wsUrl = dotenv.get("DISCORD_WS_URL", "ws://212.227.7.153:11536");
 
                 if (token != null && !token.isEmpty()) {
-                    discordManager = new DiscordManager(this, "ws://212.227.7.153:11536");
+                    discordManager = new DiscordManager(this, wsUrl);
                     discordManager.connect();
 
                     String discordId = DiscordRPCManager.getUserId();
@@ -206,6 +236,115 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         this.shakeIntensity = intensity;
     }
 
+    // Krátké zamrznutí hry na klíčové momenty (kritický zásah, smrt bosse, výbuchy) - "hit-stop"
+    private int hitStopFrames = 0;
+
+    private void triggerHitStop(int frames) {
+        if (frames > hitStopFrames) hitStopFrames = frames;
+    }
+
+    private void tryUnlockAchievement(String id) {
+        Achievement unlocked = AchievementManager.tryUnlock(id);
+        if (unlocked != null) {
+            achievementToastTitle = "🏆 " + unlocked.title;
+            achievementToastDesc = unlocked.description;
+            achievementToastTimer = System.currentTimeMillis() + 5000;
+        }
+    }
+
+    // --- CO-OP: interakce druhého hráče se světem ---
+    // Vědomé zjednodušení: kolize s bossem (laser/AOE) a řešeny nejsou pro
+    // hráče 2, aby se nemusela duplikovat celá logika Boss.update(). Pasti,
+    // běžní nepřátelé, jejich střely a sběr lootu/duší fungují pro oba.
+    private void updatePlayer2Interactions() {
+        for (Hazard h : hazards) {
+            if (h.getHitbox().intersects(player2.getHitbox())) {
+                if (h.type == Hazard.Type.LAVA && !player2.isDashing) {
+                    if (System.currentTimeMillis() % 20 == 0) player2.takeDamage(1);
+                } else if (h.type == Hazard.Type.SPIKE && h.isActive && !player2.isDashing) {
+                    player2.takeDamage(10);
+                    triggerShake(3, 3);
+                    damageTexts.add(new DamageText(player2.x, player2.y, "-10", Color.RED, true));
+                    player2.y += 20;
+                }
+            }
+        }
+
+        List<LootDrop> collected2 = new ArrayList<>();
+        for (LootDrop drop : lootDrops) {
+            if (drop.getHitbox().intersects(player2.getHitbox())) {
+                inventoryManager.addItem(drop.item);
+                inventoryManager.applyBonusesToPlayer(player);
+                inventoryManager.applyBonusesToPlayer(player2);
+                collected2.add(drop);
+            }
+        }
+        if (!collected2.isEmpty()) lootDrops.removeAll(collected2);
+
+        List<Soul> collectedSouls2 = new ArrayList<>();
+        for (Soul soul : souls) {
+            if (soul.getHitbox().intersects(player2.getHitbox())) {
+                player2.hp = Math.min(player2.maxHp, player2.hp + 10);
+                collectedSouls2.add(soul);
+            }
+        }
+        if (!collectedSouls2.isEmpty()) souls.removeAll(collectedSouls2);
+
+        List<Projectile> hitPlayer2 = new ArrayList<>();
+        for (Projectile p : enemyProjectiles) {
+            if (p.getHitbox().intersects(player2.getHitbox()) && !player2.isDashing) {
+                player2.takeDamage(10);
+                hitPlayer2.add(p);
+                damageTexts.add(new DamageText(player2.x, player2.y, "-10", Color.RED, true));
+                triggerShake(3, 3);
+            }
+        }
+        if (!hitPlayer2.isEmpty()) enemyProjectiles.removeAll(hitPlayer2);
+
+        for (Enemy enemy : enemies) {
+            if (enemy.hp <= 0) continue; // smrt zpracuje hlavní smyčka nepřátel
+            if (enemy.getHitbox().intersects(player2.getHitbox()) && !player2.isDashing && !enemy.isFrozen()) {
+                if (enemy.enemyType == Enemy.EnemyType.KAMIKAZE) {
+                    enemy.hp = 0;
+                } else {
+                    player2.takeDamage(15);
+                    triggerShake(4, 5);
+                    damageTexts.add(new DamageText(player2.x, player2.y, "-15", Color.RED, true));
+                }
+            }
+        }
+    }
+
+    // Automatická střelba hráče 2 na nejbližšího nepřítele/bosse - nemá myš,
+    // takže cílí sám. Sdílí formuli poškození se sdíleným inventářem/staty.
+    private void updatePlayer2AutoFire() {
+        if (!player2FireHeld) return;
+        long now = System.currentTimeMillis();
+        if (now - player2LastShotTime < PLAYER2_FIRE_COOLDOWN) return;
+
+        double fromX = player2.x + player2.size / 2.0;
+        double fromY = player2.y + player2.size / 2.0;
+
+        double bestDist = Double.MAX_VALUE;
+        double targetX = 0, targetY = 0;
+        boolean found = false;
+
+        for (Enemy e : enemies) {
+            double d = Math.hypot(e.x - fromX, e.y - fromY);
+            if (d < bestDist) { bestDist = d; targetX = e.x; targetY = e.y; found = true; }
+        }
+        if (boss != null) {
+            double bx = boss.x + boss.width / 2.0, by = boss.y + boss.height / 2.0;
+            double d = Math.hypot(bx - fromX, by - fromY);
+            if (d < bestDist) { bestDist = d; targetX = bx; targetY = by; found = true; }
+        }
+
+        if (found) {
+            projectiles.add(new Projectile(fromX, fromY, targetX, targetY, 1, false));
+            player2LastShotTime = now;
+        }
+    }
+
     // --- GENEROVÁNÍ NÁHODNÝCH PASTÍ ---
     private void generateHazards() {
         hazards.clear();
@@ -231,8 +370,42 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     private void resetGame(int startWave) {
         currentWave = startWave;
         player = new Player(WIDTH / 2.0, HEIGHT / 2.0);
-        player.level = 1;
         player.setAnimations(playerWalkAnim);
+
+        // Trvalá meta-progrese - permanentní bonusy odemčené za dosažené vlny napříč runy
+        player.maxHp += ConfigManager.getMetaBonusMaxHp();
+        player.bonusDamage += ConfigManager.getMetaBonusDamage();
+        player.bonusSpeed += ConfigManager.getMetaBonusSpeed();
+
+        // Zvolený build ze startovní obrazovky
+        if (selectedBuild == 0) { // Tank
+            player.maxHp += 50;
+            player.bonusSpeed -= 0.5;
+        } else if (selectedBuild == 1) { // Rychlý
+            player.maxHp -= 20;
+            player.bonusSpeed += 1.5;
+        } else if (selectedBuild == 2) { // Glass Cannon
+            player.maxHp -= 30;
+            player.bonusDamage += 20;
+        }
+        if (player.maxHp < 20) player.maxHp = 20; // Pojistka proti záporným/nesmyslně nízkým HP
+        player.hp = player.maxHp;
+
+        if (coopEnabled) {
+            player2 = new Player(WIDTH / 2.0 + 50, HEIGHT / 2.0);
+            player2.setAnimations(playerWalkAnim);
+            player2.weapon2Unlocked = player.weapon2Unlocked;
+            player2.weapon3Unlocked = player.weapon3Unlocked;
+            player2.weapon4Unlocked = player.weapon4Unlocked;
+            player2.maxHp = player.maxHp;
+            player2.hp = player2.maxHp;
+            player2.bonusDamage = player.bonusDamage;
+            player2.bonusSpeed = player.bonusSpeed;
+            up2 = down2 = left2 = right2 = false;
+            player2FireHeld = false;
+        } else {
+            player2 = null;
+        }
 
         enemies.clear();
         projectiles.clear();
@@ -251,14 +424,28 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         isGameOver = false;
         showTutorial = true;
         isMousePressed = false;
+        finalBossDefeated = false;
 
         updateWeaponInfo();
 
         ConfigManager.save(currentWave);
+        if (currentWave >= 10) tryUnlockAchievement("wave_10");
         audioManager.playMusicForWave(Math.min(currentWave, 3));
 
         waveManager.startNextWave(currentWave);
         gameState = State.PLAYING;
+    }
+
+    // Spustí zvolený run (nová hra/endless/pokračování) - u úplně první nové hry
+    // ještě před samotným startem přehraje intro cutscénu.
+    private void startPendingRun() {
+        if (pendingStartWave == 1 && !introPlayed) {
+            introPlayed = true;
+            gameState = State.CUTSCENE;
+            cutsceneManager.startCutsceneFromFile("/cutscenes/texts/intro.txt", () -> resetGame(1));
+        } else {
+            resetGame(pendingStartWave);
+        }
     }
 
     public void startGame() {
@@ -316,7 +503,11 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
     public void triggerDiscordAction(String text, Runnable action) {
         long now = System.currentTimeMillis();
-        if (now - lastDiscordActionTime < DISCORD_ACTION_COOLDOWN) return; // Rate-limit proti spamu/griefingu diváků
+        if (now - lastDiscordActionTime < DISCORD_ACTION_COOLDOWN) {
+            // Není to chyba - jen rate-limit. Loguje se, ať to nevypadá jako tiše ztracená akce.
+            System.out.println("⏳ Akce od diváků ignorována (rate-limit, další za " + (DISCORD_ACTION_COOLDOWN - (now - lastDiscordActionTime)) + "ms): " + text);
+            return;
+        }
         lastDiscordActionTime = now;
 
         this.discordMsg = text;
@@ -378,11 +569,8 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     private void proceedToNextWave() {
         currentWave++;
         ConfigManager.save(currentWave);
+        if (currentWave >= 10) tryUnlockAchievement("wave_10");
         audioManager.playMusicForWave(Math.min(currentWave, 3));
-
-        if (player.activeWeapon == 2 && player.level < 2) player.activeWeapon = 1;
-        if (player.activeWeapon == 3 && player.level < 3) player.activeWeapon = 1;
-        if (player.activeWeapon == 4 && player.level < 4) player.activeWeapon = 1;
 
         generateHazards();
         updateWeaponInfo();
@@ -415,6 +603,11 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             return;
         }
 
+        if (hitStopFrames > 0) {
+            hitStopFrames--;
+            return;
+        }
+
         if (shakeDuration > 0) {
             shakeX = (int)(Math.random() * shakeIntensity - shakeIntensity / 2);
             shakeY = (int)(Math.random() * shakeIntensity - shakeIntensity / 2);
@@ -437,11 +630,17 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             if (!isGameOver) {
                 isGameOver = true; isMousePressed = false;
                 audioManager.playGameOverMusic(); DiscordRPCManager.updatePresence(currentWave, 0, 0);
+                ConfigManager.recordRunResult(currentWave);
             }
             return;
         }
 
         player.update(up, down, left, right, WIDTH, HEIGHT, invertedControls);
+        if (coopEnabled && player2 != null && player2.hp > 0) {
+            player2.update(up2, down2, left2, right2, WIDTH, HEIGHT, invertedControls);
+            updatePlayer2Interactions();
+            updatePlayer2AutoFire();
+        }
         waveManager.update(enemies, WIDTH, HEIGHT);
 
         // --- UPDATE PASTÍ A JEJICH KOLIZÍ S HRÁČEM ---
@@ -503,6 +702,32 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                         player.useAbility(800);
                         isMousePressed = false;
                     }
+                    else if (comboId == 7) {
+                        // METEOR: okamžitý plošný zásah v místě kurzoru, ultimátní kombo za všechny 3 krystaly
+                        double impactX = mouseTargetX, impactY = mouseTargetY;
+                        int meteorRadius = 140;
+                        int meteorDmg = 120 + player.bonusDamage;
+
+                        triggerShake(20, 14);
+                        triggerHitStop(6);
+                        for (int i = 0; i < 40; i++) particles.add(new Particle(impactX, impactY, Color.YELLOW));
+
+                        for (Enemy e : enemies) {
+                            if (Math.hypot(e.x - impactX, e.y - impactY) <= meteorRadius) {
+                                e.hp -= meteorDmg;
+                                damageTexts.add(new DamageText(e.x, e.y, "-" + meteorDmg, Color.YELLOW, true));
+                            }
+                        }
+                        if (boss != null) {
+                            double bx = boss.x + boss.width / 2.0, by = boss.y + boss.height / 2.0;
+                            if (Math.hypot(bx - impactX, by - impactY) <= meteorRadius) {
+                                boss.hp -= meteorDmg;
+                                damageTexts.add(new DamageText(bx, by, "-" + meteorDmg, Color.YELLOW, true));
+                            }
+                        }
+                        player.useAbility(4000);
+                        isMousePressed = false;
+                    }
                 }
             }
         }
@@ -518,6 +743,15 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                     enemies.clear();
                     gameState = State.PLAYING;
                 });
+            } else if (currentWave == FINAL_BOSS_WAVE && !finalBossDefeated) {
+                gameState = State.CUTSCENE;
+                isMousePressed = false;
+
+                cutsceneManager.startCutsceneFromFile("/cutscenes/texts/3/level3_ending.txt", () -> {
+                    boss = new Boss(WIDTH, Boss.Variant.FINAL);
+                    enemies.clear();
+                    gameState = State.PLAYING;
+                });
             } else {
                 proceedToNextWave();
             }
@@ -525,7 +759,26 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
         if (boss != null) {
             boss.update(player, enemyProjectiles);
-            if (boss.hp <= 0) { boss = null; gameState = State.VICTORY; isMousePressed = false; }
+            if (boss.hp <= 0) {
+                boolean wasFinalBoss = boss.variant == Boss.Variant.FINAL;
+                triggerShake(20, 12);
+                triggerHitStop(12);
+                boss = null;
+                isMousePressed = false;
+
+                if (coopEnabled) tryUnlockAchievement("coop_victory");
+
+                if (wasFinalBoss) {
+                    finalBossDefeated = true;
+                    tryUnlockAchievement("true_ending");
+                    ConfigManager.recordRunResult(currentWave);
+                    gameState = State.CUTSCENE;
+                    cutsceneManager.startCutsceneFromFile("/cutscenes/texts/epilogue.txt", () -> gameState = State.MENU);
+                } else {
+                    tryUnlockAchievement("first_blood");
+                    gameState = State.VICTORY;
+                }
+            }
         }
 
         walls.removeIf(Wall::isDead);
@@ -537,6 +790,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             if (drop.getHitbox().intersects(player.getHitbox())) {
                 inventoryManager.addItem(drop.item);
                 inventoryManager.applyBonusesToPlayer(player);
+                if (coopEnabled && player2 != null) inventoryManager.applyBonusesToPlayer(player2);
                 collectedDrops.add(drop);
             }
         }
@@ -575,6 +829,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
                     if (h.hp <= 0) {
                         triggerShake(10, 8);
+                        triggerHitStop(4);
                         for (int i = 0; i < 30; i++) particles.add(new Particle(h.x + 20, h.y + 20, Color.ORANGE));
 
                         for (Enemy e : enemies) {
@@ -596,7 +851,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             if (boss != null && p.getHitbox().intersects(boss.getHitbox())) {
                 deadProjectiles.add(p);
                 if (!boss.isBlocking) {
-                    int baseDmg = (p.type == 5) ? 80 : (player.level >= 3 ? 50 : (player.level == 2 ? 40 : 25));
+                    int baseDmg = (p.type == 5) ? 80 : 25;
                     int dmg = baseDmg + player.bonusDamage;
 
                     boss.hp -= dmg;
@@ -612,10 +867,10 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             for (Enemy enemy : enemies) {
                 if (p.getHitbox().intersects(enemy.getHitbox())) {
                     if (p.type == 1 || p.type == 5) {
-                        int baseDmg = (p.type == 5) ? 80 : (player.level >= 3 ? 50 : (player.level == 2 ? 40 : 25));
+                        int baseDmg = (p.type == 5) ? 80 : 25;
                         int dmg = baseDmg + player.bonusDamage;
 
-                        if (player.level >= 3 && p.type == 1) {
+                        if (player.weapon3Unlocked && p.type == 1) {
                             java.util.ArrayList<Enemy> nearby = new java.util.ArrayList<>();
                             for (Enemy e : enemies) {
                                 if (Math.hypot(e.x - enemy.x, e.y - enemy.y) <= 100) nearby.add(e);
@@ -648,7 +903,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                     }
                     else if (p.type == 2) {
                         enemy.freeze(2500);
-                        if (player.level >= 3) enemy.startDotDamage(2000);
+                        if (player.weapon3Unlocked) enemy.startDotDamage(2000);
                         damageTexts.add(new DamageText(enemy.x, enemy.y, "MRAZ", Color.CYAN, false));
                     }
                     deadProjectiles.add(p);
@@ -728,6 +983,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                 // Výbuch Kamikaze po jeho smrti
                 if (enemy.enemyType == Enemy.EnemyType.KAMIKAZE) {
                     triggerShake(8, 6);
+                    triggerHitStop(3);
                     for(int i = 0; i < 20; i++) particles.add(new Particle(enemy.x, enemy.y, Color.YELLOW));
                     if (Math.hypot(player.x - enemy.x, player.y - enemy.y) <= 80 && !player.isDashing) {
                         player.takeDamage(25);
@@ -786,13 +1042,12 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     private void updateWeaponInfo() {
         if(player == null) return;
         swapTextTimer = System.currentTimeMillis() + 2000;
-        int lvl = player.level;
         int bDmg = player.bonusDamage;
 
         if (player.activeWeapon == 1) {
-            activeWeaponInfo = "Ohnivá střela: " + ((lvl >= 3 ? 50 : (lvl == 2 ? 40 : 25)) + bDmg) + " DMG" + (lvl >= 3 ? " (Plošný výbuch)" : "");
+            activeWeaponInfo = "Ohnivá střela: " + (25 + bDmg) + " DMG" + (player.weapon3Unlocked ? " (Plošný výbuch)" : "");
         } else if (player.activeWeapon == 2) {
-            activeWeaponInfo = "Mráz: Zmrazí cíl" + (lvl >= 3 ? " + Jed (" + bDmg + " DMG)" : "");
+            activeWeaponInfo = "Mráz: Zmrazí cíl" + (player.weapon3Unlocked ? " + Jed (" + bDmg + " DMG)" : "");
         } else if (player.activeWeapon == 3) {
             activeWeaponInfo = "Větrný Štít: Odstrkuje nepřátele (3s)";
         } else if (player.activeWeapon == 4) {
@@ -802,9 +1057,42 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                 activeWeaponInfo = "SuperNova: 8-směrný výbuch (" + (80 + bDmg) + " DMG)";
             } else if (inventoryManager.equippedComboId == 6) {
                 activeWeaponInfo = "Vánice: Trojitý ledový výstřel";
+            } else if (inventoryManager.equippedComboId == 7) {
+                activeWeaponInfo = "Meteor: Plošný zásah v místě kurzoru (" + (120 + bDmg) + " DMG, 4s CD)";
             } else {
                 activeWeaponInfo = "Žádné Kombo Vybaveno!";
             }
+        }
+    }
+
+    // Banner z Discord viewer akcí a achievement toast - kreslí se úplně navrchu,
+    // nezávisle na tom, v jakém stavu hra zrovna je (cutscéna/inventář/minihra/vítězství),
+    // aby akce diváka nezmizela beze stopy jen proto, že hráč zrovna prochází menu.
+    private void drawViewerNotifications(Graphics2D g2, int realW, int realH, float scale) {
+        if (System.currentTimeMillis() < msgTimer) {
+            int boxHeight = (int)(60 * scale);
+            g2.setColor(new Color(0, 0, 0, 180)); g2.fillRect(0, realH / 2 - boxHeight/2, realW, boxHeight);
+            g2.setColor(Color.CYAN); g2.setFont(new Font("Arial", Font.BOLD, (int)(30 * scale)));
+            FontMetrics fmMsg = g2.getFontMetrics(); int textX = (realW - fmMsg.stringWidth(discordMsg)) / 2;
+            g2.drawString(discordMsg, textX, realH / 2 + fmMsg.getAscent()/4);
+        }
+
+        if (System.currentTimeMillis() < achievementToastTimer) {
+            int toastW = (int)(360 * scale), toastH = (int)(55 * scale);
+            int toastX = (realW - toastW) / 2, toastY = (int)(70 * scale);
+
+            g2.setColor(new Color(0, 0, 0, 200)); g2.fillRoundRect(toastX, toastY, toastW, toastH, 12, 12);
+            g2.setColor(new Color(255, 215, 0)); g2.setStroke(new BasicStroke(2));
+            g2.drawRoundRect(toastX, toastY, toastW, toastH, 12, 12);
+            g2.setStroke(new BasicStroke(1));
+
+            g2.setFont(new Font("Arial", Font.BOLD, (int)(16 * scale)));
+            g2.setColor(new Color(255, 215, 0));
+            g2.drawString(achievementToastTitle, toastX + 12, toastY + (int)(22 * scale));
+
+            g2.setFont(new Font("Arial", Font.PLAIN, (int)(13 * scale)));
+            g2.setColor(Color.WHITE);
+            g2.drawString(achievementToastDesc, toastX + 12, toastY + (int)(40 * scale));
         }
     }
 
@@ -840,6 +1128,26 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             FontMetrics fmTitle = g2.getFontMetrics();
             g2.drawString("MJUN GAME", (realW - fmTitle.stringWidth("MJUN GAME")) / 2, realH / 3);
 
+            // TOP 5 - lokální leaderboard v pravém horním rohu
+            if (!ConfigManager.leaderboard.isEmpty()) {
+                Font lbTitleFont = new Font("Arial", Font.BOLD, (int)(15 * scale));
+                Font lbFont = new Font("Arial", Font.PLAIN, (int)(13 * scale));
+                int lbX = realW - (int)(160 * scale);
+                int lbY = (int)(20 * scale);
+
+                g2.setColor(Color.YELLOW); g2.setFont(lbTitleFont);
+                g2.drawString("TOP RUNY", lbX, lbY);
+
+                g2.setFont(lbFont); g2.setColor(Color.LIGHT_GRAY);
+                int rank = 1;
+                for (String entry : ConfigManager.leaderboard) {
+                    String[] parts = entry.split("\\|");
+                    String line = rank + ". Vlna " + parts[0] + (parts.length > 1 ? "  (" + parts[1] + ")" : "");
+                    g2.drawString(line, lbX, lbY + rank * (int)(18 * scale));
+                    rank++;
+                }
+            }
+
             g2.setFont(menuFont); FontMetrics fmMenu = g2.getFontMetrics();
             int menuY = realH / 2; int spacing = (int)(40 * scale);
 
@@ -852,6 +1160,137 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             g2.drawString(t2, (realW - fmMenu.stringWidth(t2)) / 2, menuY + spacing);
             g2.drawString(t3, (realW - fmMenu.stringWidth(t3)) / 2, menuY + spacing * 2);
             g2.setColor(Color.YELLOW); g2.drawString(t4, (realW - fmMenu.stringWidth(t4)) / 2, menuY + spacing * 3 + 10);
+
+            Font coopFont = new Font("Arial", Font.BOLD, (int)(17 * scale));
+            g2.setFont(coopFont);
+            g2.setColor(coopEnabled ? Color.GREEN : Color.GRAY);
+            String coopText = "[C] Co-op (2 hráči): " + (coopEnabled ? "ZAPNUTO" : "vypnuto");
+            g2.drawString(coopText, (realW - g2.getFontMetrics().stringWidth(coopText)) / 2, menuY + spacing * 4 - 2);
+
+            Font metaFont = new Font("Arial", Font.ITALIC, (int)(15 * scale));
+            g2.setFont(metaFont);
+            g2.setColor(new Color(150, 220, 255));
+            String meta = ConfigManager.describeMetaProgress();
+            g2.drawString(meta, (realW - g2.getFontMetrics().stringWidth(meta)) / 2, menuY + spacing * 4 + 30);
+
+            g2.setColor(new Color(255, 215, 0));
+            String achText = "[A] Achievementy: " + ConfigManager.unlockedAchievements.size() + "/" + AchievementManager.ALL.size();
+            g2.drawString(achText, (realW - g2.getFontMetrics().stringWidth(achText)) / 2, menuY + spacing * 4 + 55);
+
+            g2.setColor(Color.LIGHT_GRAY);
+            String creditsHint = "[V] Kredity";
+            g2.drawString(creditsHint, (realW - g2.getFontMetrics().stringWidth(creditsHint)) / 2, menuY + spacing * 4 + 78);
+            return;
+        }
+
+        if (gameState == State.ACHIEVEMENTS) {
+            Font achTitleFont = new Font("Arial", Font.BOLD, (int)(34 * scale));
+            g2.setColor(Color.WHITE); g2.setFont(achTitleFont);
+            String achScreenTitle = "ACHIEVEMENTY";
+            g2.drawString(achScreenTitle, (realW - g2.getFontMetrics().stringWidth(achScreenTitle)) / 2, (int)(55 * scale));
+
+            Font achHintFont = new Font("Arial", Font.ITALIC, (int)(14 * scale));
+            g2.setColor(Color.LIGHT_GRAY); g2.setFont(achHintFont);
+            String achHint = "[TAB/ESC] Zpět do menu";
+            g2.drawString(achHint, (realW - g2.getFontMetrics().stringWidth(achHint)) / 2, (int)(78 * scale));
+
+            int listY = (int)(120 * scale);
+            int rowHeight = (int)(55 * scale);
+            Font nameFont = new Font("Arial", Font.BOLD, (int)(18 * scale));
+            Font descFont = new Font("Arial", Font.PLAIN, (int)(14 * scale));
+
+            for (Achievement a : AchievementManager.ALL) {
+                boolean unlocked = ConfigManager.isAchievementUnlocked(a.id);
+                int boxX = (int)(60 * scale), boxW = realW - (int)(120 * scale);
+
+                g2.setColor(unlocked ? new Color(40, 40, 0, 200) : new Color(30, 30, 30, 200));
+                g2.fillRoundRect(boxX, listY, boxW, rowHeight - 10, 10, 10);
+                g2.setColor(unlocked ? new Color(255, 215, 0) : Color.DARK_GRAY);
+                g2.drawRoundRect(boxX, listY, boxW, rowHeight - 10, 10, 10);
+
+                g2.setFont(nameFont);
+                g2.setColor(unlocked ? new Color(255, 215, 0) : Color.GRAY);
+                String title = unlocked ? ("🏆 " + a.title) : (a.secret ? "??? (tajný achievement)" : a.title);
+                g2.drawString(title, boxX + 15, listY + (int)(22 * scale));
+
+                g2.setFont(descFont);
+                g2.setColor(unlocked ? Color.WHITE : Color.DARK_GRAY);
+                String desc = unlocked ? a.description : (a.secret ? "Objevíš, až ho odemkneš." : a.description);
+                g2.drawString(desc, boxX + 15, listY + (int)(40 * scale));
+
+                listY += rowHeight;
+            }
+            return;
+        }
+
+        if (gameState == State.CREDITS) {
+            Font crTitleFont = new Font("Arial", Font.BOLD, (int)(34 * scale));
+            g2.setColor(Color.WHITE); g2.setFont(crTitleFont);
+            String crTitle = "MJUN GAME";
+            g2.drawString(crTitle, (realW - g2.getFontMetrics().stringWidth(crTitle)) / 2, (int)(60 * scale));
+
+            Font crHintFont = new Font("Arial", Font.ITALIC, (int)(14 * scale));
+            g2.setColor(Color.LIGHT_GRAY); g2.setFont(crHintFont);
+            String crHint = "[TAB/ESC] Zpět do menu";
+            g2.drawString(crHint, (realW - g2.getFontMetrics().stringWidth(crHint)) / 2, (int)(85 * scale));
+
+            String[] lines = {
+                    "",
+                    "Narozeninová edice",
+                    "Věnováno MJUNovi k narozeninám",
+                    "",
+                    "Design a vývoj hry",
+                    "MJUN GAME Team",
+                    "",
+                    "Postavené na",
+                    "Java Swing • Java Sound API",
+                    "org.java-websocket • gson • dotenv-java",
+                    "",
+                    "Díky, že hraješ!",
+            };
+
+            int lineY = (int)(140 * scale);
+            int lineSpacing = (int)(32 * scale);
+            for (String line : lines) {
+                if (line.isEmpty()) { lineY += lineSpacing / 2; continue; }
+                boolean isHeading = line.equals("Narozeninová edice") || line.equals("Design a vývoj hry")
+                        || line.equals("Postavené na") || line.equals("Díky, že hraješ!");
+                g2.setFont(isHeading ? new Font("Arial", Font.BOLD, (int)(20 * scale)) : new Font("Arial", Font.PLAIN, (int)(16 * scale)));
+                g2.setColor(isHeading ? new Color(255, 215, 0) : Color.WHITE);
+                g2.drawString(line, (realW - g2.getFontMetrics().stringWidth(line)) / 2, lineY);
+                lineY += lineSpacing;
+            }
+            return;
+        }
+
+        if (gameState == State.BUILD_SELECT) {
+            Font bsTitleFont = new Font("Arial", Font.BOLD, (int)(36 * scale));
+            Font bsFont = new Font("Arial", Font.PLAIN, (int)(20 * scale));
+            Font bsDescFont = new Font("Arial", Font.ITALIC, (int)(14 * scale));
+
+            g2.setColor(Color.WHITE); g2.setFont(bsTitleFont);
+            String bsTitle = "ZVOL SVŮJ BUILD";
+            g2.drawString(bsTitle, (realW - g2.getFontMetrics().stringWidth(bsTitle)) / 2, realH / 4);
+
+            String[] names = {"[1] TANK", "[2] RYCHLÝ", "[3] GLASS CANNON"};
+            String[] descs = {
+                    "+50 HP, ale pomalejší",
+                    "+1.5 rychlost, ale -20 HP",
+                    "+20 poškození, ale -30 HP"
+            };
+            Color[] colors = {Color.GREEN, Color.CYAN, Color.RED};
+
+            int bsY = realH / 2 - 40;
+            int bsSpacing = (int)(70 * scale);
+            for (int i = 0; i < 3; i++) {
+                g2.setFont(bsFont);
+                g2.setColor(colors[i]);
+                g2.drawString(names[i], (realW - g2.getFontMetrics().stringWidth(names[i])) / 2, bsY + i * bsSpacing);
+
+                g2.setFont(bsDescFont);
+                g2.setColor(Color.LIGHT_GRAY);
+                g2.drawString(descs[i], (realW - g2.getFontMetrics().stringWidth(descs[i])) / 2, bsY + i * bsSpacing + 22);
+            }
             return;
         }
 
@@ -884,6 +1323,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
         if (boss != null) boss.draw(g2, realH);
         if (player != null) player.draw(g2);
+        if (coopEnabled && player2 != null && player2.hp > 0) player2.draw(g2);
 
         for (DamageText dt : damageTexts) dt.draw(g2);
 
@@ -895,11 +1335,13 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
         if (gameState == State.CUTSCENE) {
             cutsceneManager.draw(g2, realW, realH);
+            drawViewerNotifications(g2, realW, realH, scale);
             return;
         }
 
         if (gameState == State.INVENTORY) {
             inventoryManager.draw(g2, realW, realH, mouseTargetX, mouseTargetY);
+            drawViewerNotifications(g2, realW, realH, scale);
             return;
         }
 
@@ -921,6 +1363,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             g2.setColor(Color.GRAY); g2.fillRect(barX, barY, 600, 40);
             g2.setColor(Color.GREEN); g2.fillRect(barX + mgTargetX, barY, mgTargetW, 40);
             g2.setColor(Color.WHITE); g2.fillRect(barX + mgCursorX - 5, barY - 10, 10, 60);
+            drawViewerNotifications(g2, realW, realH, scale);
             return;
         }
 
@@ -933,16 +1376,11 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             g2.drawString("[1] Jít do Endless módu (Ponechat si Vybavení)", realW/2 - (int)(220*scale), realH/2);
             g2.drawString("[2] Jít do Endless módu Čistý (Hardcore)", realW/2 - (int)(220*scale), realH/2 + (int)(50*scale));
             g2.drawString("[3] Zpět do Menu", realW/2 - (int)(220*scale), realH/2 + (int)(100*scale));
+            drawViewerNotifications(g2, realW, realH, scale);
             return;
         }
 
-        if (System.currentTimeMillis() < msgTimer) {
-            int boxHeight = (int)(60 * scale);
-            g2.setColor(new Color(0, 0, 0, 180)); g2.fillRect(0, realH / 2 - boxHeight/2, realW, boxHeight);
-            g2.setColor(Color.CYAN); g2.setFont(new Font("Arial", Font.BOLD, (int)(30 * scale)));
-            FontMetrics fmMsg = g2.getFontMetrics(); int textX = (realW - fmMsg.stringWidth(discordMsg)) / 2;
-            g2.drawString(discordMsg, textX, realH / 2 + fmMsg.getAscent()/4);
-        }
+        drawViewerNotifications(g2, realW, realH, scale);
 
         int uiFontSize = (int)(18 * scale);
         g2.setFont(new Font("Arial", Font.BOLD, uiFontSize));
@@ -952,6 +1390,24 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         FontMetrics fmUI = g2.getFontMetrics();
         g2.setColor(currentWave >= 3 ? Color.MAGENTA : Color.ORANGE);
         g2.drawString(waveText, (realW - fmUI.stringWidth(waveText)) / 2, (int)(30 * scale));
+
+        // Tutoriál info bar - jen na první vlně, dokud ho hráč nezavře klávesou T
+        if (currentWave == 1 && showTutorial) {
+            int barW = (int)(560 * scale), barH = (int)(48 * scale);
+            int barX = (realW - barW) / 2, barY = (int)(70 * scale);
+
+            g2.setColor(new Color(0, 0, 0, 190));
+            g2.fillRoundRect(barX, barY, barW, barH, 12, 12);
+            g2.setColor(new Color(100, 200, 255));
+            g2.drawRoundRect(barX, barY, barW, barH, 12, 12);
+
+            g2.setFont(new Font("Arial", Font.PLAIN, (int)(13 * scale)));
+            g2.setColor(Color.WHITE);
+            String tutLine1 = "[TAB] Inventář - klikni na 2 předměty pro jejich zkombinování";
+            String tutLine2 = "Různé krystaly = nová kombo zbraň • [T] skrýt tuhle nápovědu";
+            g2.drawString(tutLine1, barX + 14, barY + (int)(20 * scale));
+            g2.drawString(tutLine2, barX + 14, barY + (int)(38 * scale));
+        }
 
         if (player != null) {
             g2.setFont(new Font("Arial", Font.BOLD, uiFontSize));
@@ -964,26 +1420,25 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                 if (inventoryManager.equippedComboId == 4) weaponName = "Ohnivá Aura";
                 else if (inventoryManager.equippedComboId == 5) weaponName = "SuperNova";
                 else if (inventoryManager.equippedComboId == 6) weaponName = "Vánice";
+                else if (inventoryManager.equippedComboId == 7) weaponName = "Meteor";
                 else weaponName = "Žádné Kombo";
             }
 
-            long cd = player.getRemainingCooldown();
             long swapCd = player.getSwapCooldown();
-            int yOffset = (int)(30 * scale);
-
-            if (swapCd > 0) {
-                g2.setColor(Color.YELLOW); g2.drawString("Výměna: " + (Math.round(swapCd / 100.0) / 10.0) + "s", 15, yOffset);
-            } else if (cd > 0) {
-                g2.setColor(Color.RED); g2.drawString("Zbraň čeká: " + (Math.round(cd / 100.0) / 10.0) + "s", 15, yOffset);
-            } else {
-                g2.setColor(Color.GREEN); g2.drawString("PŘIPRAVENO", 15, yOffset);
-            }
 
             g2.setColor(new Color(0, 0, 0, 180)); g2.fillRoundRect(10, realH - 80, realW - 20, 75, 15, 15);
             g2.setColor(Color.GRAY); g2.drawRoundRect(10, realH - 80, realW - 20, 75, 15, 15);
 
             g2.setFont(new Font("Arial", Font.ITALIC, 14)); g2.setColor(Color.LIGHT_GRAY);
             g2.drawString("Aktivní schopnost: " + activeWeaponInfo, 25, realH - 55);
+
+            // Připravenost výměny zbraně - bez textu, jen barevný indikátor v rohu panelu
+            int readyDotSize = (int)(14 * scale);
+            int readyDotX = realW - 30, readyDotY = realH - 68;
+            g2.setColor(swapCd > 0 ? new Color(200, 60, 0) : new Color(60, 220, 60));
+            g2.fillOval(readyDotX, readyDotY, readyDotSize, readyDotSize);
+            g2.setColor(Color.BLACK);
+            g2.drawOval(readyDotX, readyDotY, readyDotSize, readyDotSize);
 
             g2.setFont(new Font("Arial", Font.BOLD, 16));
             FontMetrics fmSkills = g2.getFontMetrics();
@@ -992,12 +1447,12 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             g2.setColor(player.activeWeapon == 1 ? Color.YELLOW : Color.GRAY);
             g2.drawString("[1] Oheň", (sectionWidth * 0) + (sectionWidth - fmSkills.stringWidth("[1] Oheň"))/2, bottomY);
 
-            if (player.level >= 2) {
+            if (player.weapon2Unlocked) {
                 g2.setColor(player.activeWeapon == 2 ? Color.CYAN : Color.GRAY);
                 g2.drawString("[2] Mráz", (sectionWidth * 1) + (sectionWidth - fmSkills.stringWidth("[2] Mráz"))/2, bottomY);
             }
 
-            if (player.level >= 3) {
+            if (player.weapon3Unlocked) {
                 g2.setColor(player.activeWeapon == 3 ? Color.GREEN : Color.GRAY);
                 g2.drawString("[3] Štít", (sectionWidth * 2) + (sectionWidth - fmSkills.stringWidth("[3] Štít"))/2, bottomY);
             }
@@ -1019,11 +1474,43 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     public void mousePressed(MouseEvent e) {
         if (SwingUtilities.isLeftMouseButton(e)) {
             if (gameState == State.INVENTORY) {
-                boolean swapped = inventoryManager.tryEquipItemAt(e.getX(), e.getY(), WIDTH, HEIGHT);
-                if(swapped) updateWeaponInfo();
+                handleInventoryClick(e.getX(), e.getY());
             } else {
                 isMousePressed = true; mouseTargetX = e.getX(); mouseTargetY = e.getY();
             }
+        }
+    }
+
+    // Klik na první předmět ho vybere, klik na druhý (kompatibilní) spustí kovářskou minihru.
+    private void handleInventoryClick(int mouseX, int mouseY) {
+        int slot = inventoryManager.getSlotAt(mouseX, mouseY, WIDTH, HEIGHT);
+
+        if (slot == -1 || slot >= inventoryManager.items.size()) {
+            inventoryManager.selectedSlot = -1;
+            return;
+        }
+
+        if (inventoryManager.selectedSlot == -1) {
+            inventoryManager.selectedSlot = slot;
+            return;
+        }
+
+        if (inventoryManager.selectedSlot == slot) {
+            inventoryManager.selectedSlot = -1; // klik na stejný předmět zruší výběr
+            return;
+        }
+
+        Item a = inventoryManager.items.get(inventoryManager.selectedSlot);
+        Item b = inventoryManager.items.get(slot);
+        inventoryManager.selectedSlot = -1;
+
+        if (inventoryManager.canCombine(a, b)) {
+            pendingCombineA = a;
+            pendingCombineB = b;
+            startMinigame();
+        } else {
+            discordMsg = "Tyto předměty nelze kombinovat";
+            msgTimer = System.currentTimeMillis() + 2000;
         }
     }
 
@@ -1038,10 +1525,31 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         if (gameState == State.LOADING) return;
 
         if (gameState == State.MENU) {
-            if (key == KeyEvent.VK_1) resetGame(1);
-            if (key == KeyEvent.VK_2) resetGame(4);
+            if (key == KeyEvent.VK_1) { pendingStartWave = 1; gameState = State.BUILD_SELECT; }
+            if (key == KeyEvent.VK_2) { pendingStartWave = 4; gameState = State.BUILD_SELECT; }
             if (key == KeyEvent.VK_3) gameState = State.SETTINGS;
-            if (key == KeyEvent.VK_4) resetGame(ConfigManager.highestWave);
+            if (key == KeyEvent.VK_4) { pendingStartWave = ConfigManager.highestWave; gameState = State.BUILD_SELECT; }
+            if (key == KeyEvent.VK_C) coopEnabled = !coopEnabled;
+            if (key == KeyEvent.VK_A) gameState = State.ACHIEVEMENTS;
+            if (key == KeyEvent.VK_V) gameState = State.CREDITS;
+            return;
+        }
+
+        if (gameState == State.ACHIEVEMENTS) {
+            if (key == KeyEvent.VK_TAB || key == KeyEvent.VK_ESCAPE) gameState = State.MENU;
+            return;
+        }
+
+        if (gameState == State.CREDITS) {
+            if (key == KeyEvent.VK_TAB || key == KeyEvent.VK_ESCAPE) gameState = State.MENU;
+            return;
+        }
+
+        if (gameState == State.BUILD_SELECT) {
+            if (key == KeyEvent.VK_1) { selectedBuild = 0; startPendingRun(); }
+            if (key == KeyEvent.VK_2) { selectedBuild = 1; startPendingRun(); }
+            if (key == KeyEvent.VK_3) { selectedBuild = 2; startPendingRun(); }
+            if (key == KeyEvent.VK_ESCAPE) gameState = State.MENU;
             return;
         }
 
@@ -1057,18 +1565,15 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         }
 
         if (gameState == State.INVENTORY) {
-            // KLÁVESA K PRO ZAPNUTÍ CRAFTING INFA NA EXPONÁTECH
-            if (key == KeyEvent.VK_K) {
-                showCraftingInfo = !showCraftingInfo;
-            }
-
             if (key == KeyEvent.VK_E) {
                 inventoryManager.cycleEquippedCombo();
                 updateWeaponInfo();
             }
 
-            if (key == KeyEvent.VK_C && inventoryManager.canCraftAnything()) startMinigame();
-            if (key == KeyEvent.VK_TAB || key == KeyEvent.VK_ESCAPE) gameState = State.PLAYING;
+            if (key == KeyEvent.VK_TAB || key == KeyEvent.VK_ESCAPE) {
+                inventoryManager.selectedSlot = -1;
+                gameState = State.PLAYING;
+            }
             return;
         }
 
@@ -1076,9 +1581,18 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             if (key == KeyEvent.VK_SPACE) {
                 if (mgCursorX >= mgTargetX && mgCursorX <= mgTargetX + mgTargetW) {
                     mgSuccessHits++; mgMessage = "Pěkná rána!"; mgSpeed += 2.0; mgTargetW -= 20; mgTargetX = (int) (Math.random() * (600 - mgTargetW));
-                    if (mgSuccessHits >= 3) { triggerShake(15, 10); inventoryManager.processCraftingResult(true, player); gameState = State.INVENTORY; }
+                    if (mgSuccessHits >= 3) {
+                        triggerShake(15, 10);
+                        inventoryManager.processCombineResult(true, player, pendingCombineA, pendingCombineB);
+                        tryUnlockAchievement("crafter");
+                        pendingCombineA = null; pendingCombineB = null;
+                        gameState = State.INVENTORY;
+                    }
                 } else {
-                    mgMessage = "Minul jsi! Zkus to znovu."; mgSuccessHits = 0; inventoryManager.processCraftingResult(false, player); gameState = State.INVENTORY;
+                    mgMessage = "Minul jsi! Zkus to znovu."; mgSuccessHits = 0;
+                    inventoryManager.processCombineResult(false, player, pendingCombineA, pendingCombineB);
+                    pendingCombineA = null; pendingCombineB = null;
+                    gameState = State.INVENTORY;
                 }
             }
             return;
@@ -1097,10 +1611,26 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
             if (key == KeyEvent.VK_T) showTutorial = false;
 
-            if (key == KeyEvent.VK_W || key == KeyEvent.VK_UP) up = true;
-            if (key == KeyEvent.VK_S || key == KeyEvent.VK_DOWN) down = true;
-            if (key == KeyEvent.VK_A || key == KeyEvent.VK_LEFT) left = true;
-            if (key == KeyEvent.VK_D || key == KeyEvent.VK_RIGHT) right = true;
+            if (key == KeyEvent.VK_W) up = true;
+            if (key == KeyEvent.VK_S) down = true;
+            if (key == KeyEvent.VK_A) left = true;
+            if (key == KeyEvent.VK_D) right = true;
+
+            if (coopEnabled && player2 != null) {
+                // Hráč 2: šipky pro pohyb, ENTER pro útok, CTRL pro dash
+                if (key == KeyEvent.VK_UP) up2 = true;
+                if (key == KeyEvent.VK_DOWN) down2 = true;
+                if (key == KeyEvent.VK_LEFT) left2 = true;
+                if (key == KeyEvent.VK_RIGHT) right2 = true;
+                if (key == KeyEvent.VK_ENTER) player2FireHeld = true;
+                if (key == KeyEvent.VK_CONTROL) player2.performDash(up2, down2, left2, right2);
+            } else {
+                // Bez co-opu fungují šipky jako alternativa k WASD (jako dřív)
+                if (key == KeyEvent.VK_UP) up = true;
+                if (key == KeyEvent.VK_DOWN) down = true;
+                if (key == KeyEvent.VK_LEFT) left = true;
+                if (key == KeyEvent.VK_RIGHT) right = true;
+            }
 
             // ÚSKOK (DASH) NA KLÁVESU SHIFT
             if (key == KeyEvent.VK_SHIFT && player != null) {
@@ -1108,10 +1638,10 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             }
 
             boolean swapped = false;
-            if (key == KeyEvent.VK_1 && player != null) { player.swapWeapon(1, player.level); swapped = true; }
-            if (key == KeyEvent.VK_2 && player != null && player.level >= 2) { player.swapWeapon(2, player.level); swapped = true; }
-            if (key == KeyEvent.VK_3 && player != null && player.level >= 3) { player.swapWeapon(3, player.level); swapped = true; }
-            if (key == KeyEvent.VK_4 && player != null && inventoryManager.equippedComboId != 0) { player.swapWeapon(4, player.level); swapped = true; }
+            if (key == KeyEvent.VK_1 && player != null) swapped = player.swapWeapon(1);
+            if (key == KeyEvent.VK_2 && player != null) swapped = player.swapWeapon(2);
+            if (key == KeyEvent.VK_3 && player != null) swapped = player.swapWeapon(3);
+            if (key == KeyEvent.VK_4 && player != null) swapped = player.swapWeapon(4);
             if (swapped) updateWeaponInfo();
         }
     }
@@ -1119,10 +1649,23 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     @Override
     public void keyReleased(KeyEvent e) {
         int key = e.getKeyCode();
-        if (key == KeyEvent.VK_W || key == KeyEvent.VK_UP) up = false;
-        if (key == KeyEvent.VK_S || key == KeyEvent.VK_DOWN) down = false;
-        if (key == KeyEvent.VK_A || key == KeyEvent.VK_LEFT) left = false;
-        if (key == KeyEvent.VK_D || key == KeyEvent.VK_RIGHT) right = false;
+        if (key == KeyEvent.VK_W) up = false;
+        if (key == KeyEvent.VK_S) down = false;
+        if (key == KeyEvent.VK_A) left = false;
+        if (key == KeyEvent.VK_D) right = false;
+
+        if (coopEnabled && player2 != null) {
+            if (key == KeyEvent.VK_UP) up2 = false;
+            if (key == KeyEvent.VK_DOWN) down2 = false;
+            if (key == KeyEvent.VK_LEFT) left2 = false;
+            if (key == KeyEvent.VK_RIGHT) right2 = false;
+            if (key == KeyEvent.VK_ENTER) player2FireHeld = false;
+        } else {
+            if (key == KeyEvent.VK_UP) up = false;
+            if (key == KeyEvent.VK_DOWN) down = false;
+            if (key == KeyEvent.VK_LEFT) left = false;
+            if (key == KeyEvent.VK_RIGHT) right = false;
+        }
     }
 
     @Override public void keyTyped(KeyEvent e) {}

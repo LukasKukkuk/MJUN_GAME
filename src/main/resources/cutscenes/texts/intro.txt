@@ -1,0 +1,6 @@
+BGM;/cutscenes/music/level1intro.mp3
+TEXT;Vypravěč;Dřív, než bylo světlo, dřív než byla tma bylo nic. V nic vzniklo stvoření, plné temnoty, plné síly, plné zlosti.;;
+TEXT;Vypravěč;Tento tvor byl plný moci, byl ve vesmíru sám, ale vládl mu železnou rukou. Po nějaké době se ukázal tvor stvořeni ze světla. Temnota chtěla světlo zničit, ale světlá entita si vytvořila 4 své válečníky, kterým dala elementy, které umožnily uvěznění a zničení temnoty.;;
+TEXT;Vypravěč;Ale nikdo netušil, že temná entita, ze svého vězení vypustila a schovala temný páni. Páni, kteří měli jednoduchý úkol, zničit a zkorumpovan světy aby temnota měla moc se vrátit a zničit to, co světlo vytvořilo.;;
+TEXT;Vypravěč;Hrdinové světla zmizeli a jejich schopnosti se schovali do elementu, který disponovali temný páni.;;
+TEXT;Vypravěč;Princ regionů MJUN tohoto dne měl být korunován po svém otci, avšak před korunovaci byli hodiny, proto princ MJUN vyjel do blízké vesnice se podívat za svými přáteli.;;
