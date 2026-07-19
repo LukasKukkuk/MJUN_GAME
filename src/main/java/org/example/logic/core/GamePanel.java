@@ -31,7 +31,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     private boolean isRunning = false;
     private final int FPS = 60;
 
-    private enum State { LOADING, MENU, PLAYING, SETTINGS, INVENTORY, VICTORY, CUTSCENE, MINIGAME, BUILD_SELECT, ACHIEVEMENTS }
+    private enum State { LOADING, MENU, PLAYING, SETTINGS, INVENTORY, VICTORY, CUTSCENE, MINIGAME, BUILD_SELECT, ACHIEVEMENTS, CREDITS }
     private State gameState = State.LOADING;
 
     private int loadingProgress = 0;
@@ -1176,6 +1176,10 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             g2.setColor(new Color(255, 215, 0));
             String achText = "[A] Achievementy: " + ConfigManager.unlockedAchievements.size() + "/" + AchievementManager.ALL.size();
             g2.drawString(achText, (realW - g2.getFontMetrics().stringWidth(achText)) / 2, menuY + spacing * 4 + 55);
+
+            g2.setColor(Color.LIGHT_GRAY);
+            String creditsHint = "[V] Kredity";
+            g2.drawString(creditsHint, (realW - g2.getFontMetrics().stringWidth(creditsHint)) / 2, menuY + spacing * 4 + 78);
             return;
         }
 
@@ -1215,6 +1219,46 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                 g2.drawString(desc, boxX + 15, listY + (int)(40 * scale));
 
                 listY += rowHeight;
+            }
+            return;
+        }
+
+        if (gameState == State.CREDITS) {
+            Font crTitleFont = new Font("Arial", Font.BOLD, (int)(34 * scale));
+            g2.setColor(Color.WHITE); g2.setFont(crTitleFont);
+            String crTitle = "MJUN GAME";
+            g2.drawString(crTitle, (realW - g2.getFontMetrics().stringWidth(crTitle)) / 2, (int)(60 * scale));
+
+            Font crHintFont = new Font("Arial", Font.ITALIC, (int)(14 * scale));
+            g2.setColor(Color.LIGHT_GRAY); g2.setFont(crHintFont);
+            String crHint = "[TAB/ESC] Zpět do menu";
+            g2.drawString(crHint, (realW - g2.getFontMetrics().stringWidth(crHint)) / 2, (int)(85 * scale));
+
+            String[] lines = {
+                    "",
+                    "Narozeninová edice",
+                    "Věnováno MJUNovi k narozeninám",
+                    "",
+                    "Design a vývoj hry",
+                    "MJUN GAME Team",
+                    "",
+                    "Postavené na",
+                    "Java Swing • Java Sound API",
+                    "org.java-websocket • gson • dotenv-java",
+                    "",
+                    "Díky, že hraješ!",
+            };
+
+            int lineY = (int)(140 * scale);
+            int lineSpacing = (int)(32 * scale);
+            for (String line : lines) {
+                if (line.isEmpty()) { lineY += lineSpacing / 2; continue; }
+                boolean isHeading = line.equals("Narozeninová edice") || line.equals("Design a vývoj hry")
+                        || line.equals("Postavené na") || line.equals("Díky, že hraješ!");
+                g2.setFont(isHeading ? new Font("Arial", Font.BOLD, (int)(20 * scale)) : new Font("Arial", Font.PLAIN, (int)(16 * scale)));
+                g2.setColor(isHeading ? new Color(255, 215, 0) : Color.WHITE);
+                g2.drawString(line, (realW - g2.getFontMetrics().stringWidth(line)) / 2, lineY);
+                lineY += lineSpacing;
             }
             return;
         }
@@ -1347,6 +1391,24 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         g2.setColor(currentWave >= 3 ? Color.MAGENTA : Color.ORANGE);
         g2.drawString(waveText, (realW - fmUI.stringWidth(waveText)) / 2, (int)(30 * scale));
 
+        // Tutoriál info bar - jen na první vlně, dokud ho hráč nezavře klávesou T
+        if (currentWave == 1 && showTutorial) {
+            int barW = (int)(560 * scale), barH = (int)(48 * scale);
+            int barX = (realW - barW) / 2, barY = (int)(70 * scale);
+
+            g2.setColor(new Color(0, 0, 0, 190));
+            g2.fillRoundRect(barX, barY, barW, barH, 12, 12);
+            g2.setColor(new Color(100, 200, 255));
+            g2.drawRoundRect(barX, barY, barW, barH, 12, 12);
+
+            g2.setFont(new Font("Arial", Font.PLAIN, (int)(13 * scale)));
+            g2.setColor(Color.WHITE);
+            String tutLine1 = "[TAB] Inventář - klikni na 2 předměty pro jejich zkombinování";
+            String tutLine2 = "Různé krystaly = nová kombo zbraň • [T] skrýt tuhle nápovědu";
+            g2.drawString(tutLine1, barX + 14, barY + (int)(20 * scale));
+            g2.drawString(tutLine2, barX + 14, barY + (int)(38 * scale));
+        }
+
         if (player != null) {
             g2.setFont(new Font("Arial", Font.BOLD, uiFontSize));
 
@@ -1469,10 +1531,16 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             if (key == KeyEvent.VK_4) { pendingStartWave = ConfigManager.highestWave; gameState = State.BUILD_SELECT; }
             if (key == KeyEvent.VK_C) coopEnabled = !coopEnabled;
             if (key == KeyEvent.VK_A) gameState = State.ACHIEVEMENTS;
+            if (key == KeyEvent.VK_V) gameState = State.CREDITS;
             return;
         }
 
         if (gameState == State.ACHIEVEMENTS) {
+            if (key == KeyEvent.VK_TAB || key == KeyEvent.VK_ESCAPE) gameState = State.MENU;
+            return;
+        }
+
+        if (gameState == State.CREDITS) {
             if (key == KeyEvent.VK_TAB || key == KeyEvent.VK_ESCAPE) gameState = State.MENU;
             return;
         }

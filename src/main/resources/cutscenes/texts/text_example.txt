@@ -1,6 +1,6 @@
 BGM;/cutscenes/music/boss_intro.mp3
-TEXT;Temný Stín;Tak ty sis myslel, že to bude takhle jednoduché, MJUNe?;/boss_portrait.png;/voice/boss_1.wav
+TEXT;Temný Stín;Tak ty sis myslel, že to bude takhle jednoduché, MJUNe?;cutscenes/vizual/boss_portrait.png;/voice/boss_1.wav
 SHAKE;8
-TEXT;MJUN;Ukaž se, zbabělče! Dneska padneš!;/player_portrait.png;/voice/player_1.wav
-SFX;/sounds/thunder.wav
-TEXT;Temný Stín;Jsem tvůj konec. Připrav se na ZKÁZU!;/boss_portrait.png;/voice/boss_2.wav
+TEXT;MJUN;Ukaž se, zbabělče! Dneska padneš!;cutscenes/vizual/player_portrait.png;cutscenes/voice/player_1.wav
+SFX;cutscenes/sfx/thunder.wav
+TEXT;Temný Stín;Jsem tvůj konec. Připrav se na ZKÁZU!;cutscenes/vizual/boss_portrait.png;cutscenes/voice/boss_2.wav
